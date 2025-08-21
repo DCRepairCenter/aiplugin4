@@ -8,36 +8,70 @@ import { fetchData } from "./service";
 import { parseBody } from "../utils/utils_message";
 import { ToolManager } from "../tool/tool";
 
+/**
+ * 记忆信息接口
+ * 定义AI记忆的完整结构和元数据
+ */
 export interface MemoryInfo {
+    /** 记忆唯一标识符 */
     id: string;
+    /** 是否为私聊记忆 */
     isPrivate: boolean;
+    /** 玩家信息 */
     player: {
+        /** 用户ID */
         userId: string;
+        /** 用户名称 */
         name: string;
     }
+    /** 群组信息 */
     group: {
+        /** 群组ID */
         groupId: string;
+        /** 群组名称 */
         groupName: string;
     }
+    /** 时间描述 */
     time: string;
-    createTime: number; // 秒级时间戳
+    /** 创建时间（秒级时间戳） */
+    createTime: number;
+    /** 最后提及时间 */
     lastMentionTime: number;
+    /** 关键词列表 */
     keywords: string[];
+    /** 记忆内容 */
     content: string;
-    weight: number; // 记忆权重，0-10
+    /** 记忆权重（0-10） */
+    weight: number;
 }
 
+/**
+ * 记忆管理类
+ * 负责管理AI的长期记忆、短期记忆和人格设定
+ */
 export class Memory {
+    /** AI人格设定 */
     persona: string;
+    /** 记忆映射表，存储所有长期记忆 */
     memoryMap: { [key: string]: MemoryInfo };
+    /** 短期记忆列表 */
     shortMemory: string[];
 
+    /**
+     * 记忆管理器构造函数
+     * 初始化人格设定、记忆映射表和短期记忆
+     */
     constructor() {
         this.persona = '无';
         this.memoryMap = {};
         this.shortMemory = [];
     }
 
+    /**
+     * JSON反序列化复活器函数
+     * @param value 待恢复的数据对象
+     * @returns 恢复后的Memory实例
+     */
     static reviver(value: any): Memory {
         const memory = new Memory();
         const validKeys = ['persona', 'memoryMap', 'shortMemory'];

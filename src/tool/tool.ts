@@ -23,49 +23,95 @@ import { registerSetTriggerCondition } from "./tool_trigger"
 import { registerMusicPlay } from "./tool_music"
 import { logger } from "../AI/logger"
 
+/**
+ * 工具信息接口
+ * 定义AI可用工具的结构，包含工具名称、描述和参数规范
+ */
 export interface ToolInfo {
+    /** 工具类型，固定为function */
     type: "function",
+    /** 工具函数信息 */
     function: {
+        /** 工具名称 */
         name: string,
+        /** 工具描述 */
         description: string,
+        /** 工具参数定义 */
         parameters: {
+            /** 参数类型，固定为object */
             type: "object",
+            /** 参数属性定义 */
             properties: {
                 [key: string]: {
+                    /** 参数类型 */
                     type: string,
+                    /** 参数描述 */
                     description: string,
+                    /** 数组项目定义（可选） */
                     items?: object,
+                    /** 枚举值（可选） */
                     enum?: string[]
                 }
             },
+            /** 必需参数列表 */
             required: string[]
         }
     }
 }
 
+/**
+ * 工具调用接口
+ * 定义AI调用工具时的请求结构
+ */
 export interface ToolCall {
+    /** 调用索引 */
     index: number,
+    /** 调用ID */
     id: string,
+    /** 调用类型，固定为function */
     type: "function",
+    /** 函数调用信息 */
     function: {
+        /** 函数名称 */
         name: string,
+        /** 函数参数（JSON字符串） */
         arguments: string
     }
 }
 
+/**
+ * 命令信息接口
+ * 定义工具对应的海豹指令信息
+ */
 export interface CmdInfo {
-    ext: string, // 使用的扩展名称
-    name: string, // 指令名称
-    fixedArgs: string[] // 参数
+    /** 使用的扩展名称 */
+    ext: string,
+    /** 指令名称 */
+    name: string,
+    /** 固定参数 */
+    fixedArgs: string[]
 }
 
+/**
+ * 工具类
+ * 封装单个工具的完整信息和执行逻辑
+ */
 export class Tool {
+    /** 工具信息 */
     info: ToolInfo;
-    cmdInfo: CmdInfo; // 海豹指令信息
-    type: string; // 可使用函数的聊天场景类型："private" | "group" | "all"
-    tool_choice: string; // 是否可以继续调用函数："none" | "auto" | "required"
+    /** 海豹指令信息 */
+    cmdInfo: CmdInfo;
+    /** 可使用函数的聊天场景类型 */
+    type: string; // "private" | "group" | "all"
+    /** 是否可以继续调用函数 */
+    tool_choice: string; // "none" | "auto" | "required"
+    /** 工具执行函数 */
     solve: (ctx: seal.MsgContext, msg: seal.Message, ai: AI, args: { [key: string]: any }) => Promise<string>;
 
+    /**
+     * 工具构造函数
+     * @param info 工具信息
+     */
     constructor(info: ToolInfo) {
         this.info = info;
         this.cmdInfo = {
@@ -80,20 +126,36 @@ export class Tool {
 
 }
 
+/**
+ * 工具管理器类
+ * 管理所有可用工具的注册、状态控制和执行
+ */
 export class ToolManager {
+    /** 全局命令参数 */
     static cmdArgs: seal.CmdArgs = null;
+    /** 工具映射表，存储所有已注册的工具 */
     static toolMap: { [key: string]: Tool } = {};
+    /** 工具状态映射，控制各工具的启用/禁用状态 */
     toolStatus: { [key: string]: boolean };
+    /** 工具调用计数 */
     toolCallCount: number;
 
-    // 监听调用函数发送的内容
+    /** 监听调用函数发送的内容 */
     listen: {
+        /** 超时ID */
         timeoutId: number,
+        /** 解决函数 */
         resolve: (content: string) => void,
+        /** 拒绝函数 */
         reject: (err: Error) => void,
+        /** 清理函数 */
         cleanup: () => void
     }
 
+    /**
+     * 工具管理器构造函数
+     * 初始化工具状态和调用计数
+     */
     constructor() {
         const { toolsNotAllow, toolsDefaultClosed } = ConfigManager.tool;
         this.toolStatus = Object.keys(ToolManager.toolMap).reduce((acc, key) => {

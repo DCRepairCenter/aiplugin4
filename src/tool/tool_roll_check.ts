@@ -2,6 +2,10 @@ import { ConfigManager } from "../config/config";
 import { createMsg, createCtx } from "../utils/utils_seal";
 import { Tool, ToolInfo, ToolManager } from "./tool";
 
+/**
+ * 注册骰子检定工具
+ * 提供技能检定和属性检定功能
+ */
 export function registerRollCheck() {
     const info: ToolInfo = {
         type: "function",

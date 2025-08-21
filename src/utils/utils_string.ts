@@ -6,6 +6,12 @@ import { ConfigManager } from "../config/config";
 import { transformMsgIdBack } from "./utils";
 import { AI } from "../AI/AI";
 
+/**
+ * 将文本转换为消息数组
+ * 解析包含CQ码的文本，转换为结构化的消息数组
+ * @param s 输入文本字符串
+ * @returns 解析后的消息数组
+ */
 export function transformTextToArray(s: string): { type: string, data: { [key: string]: string } }[] {
     const segments = s.split(/(\[CQ:.*?\])/).filter(segment => segment);
     const messageArray: { type: string, data: { [key: string]: string } }[] = [];
@@ -51,6 +57,12 @@ export function transformTextToArray(s: string): { type: string, data: { [key: s
     return messageArray;
 }
 
+/**
+ * 将消息数组转换为文本
+ * 将结构化的消息数组转换回包含CQ码的文本字符串
+ * @param messageArray 消息数组
+ * @returns 转换后的文本字符串
+ */
 export function transformArrayToText(messageArray: { type: string, data: { [key: string]: string } }[]): string {
     let s = '';
     for (const message of messageArray) {
@@ -135,6 +147,13 @@ export async function handleReply(ctx: seal.MsgContext, msg: seal.Message, ai: A
     return { contextArray, replyArray, images };
 }
 
+/**
+ * 检查重复回复
+ * 通过相似度算法检测AI是否生成了重复的回复内容
+ * @param context 上下文对象
+ * @param s 待检查的回复内容
+ * @returns 是否为重复回复
+ */
 export function checkRepeat(context: Context, s: string) {
     const { stopRepeat, similarityLimit } = ConfigManager.reply;
 
@@ -383,6 +402,12 @@ async function replaceImages(context: Context, im: ImageManager, reply: string) 
     return { result, images };
 }
 
+/**
+ * 计算两个字符串的编辑距离（Levenshtein距离）
+ * @param s1 第一个字符串
+ * @param s2 第二个字符串
+ * @returns 编辑距离值
+ */
 export function levenshteinDistance(s1: string, s2: string): number {
     const len1 = s1.length;
     const len2 = s2.length;
@@ -409,6 +434,13 @@ export function levenshteinDistance(s1: string, s2: string): number {
     return dp[len1][len2];
 }
 
+/**
+ * 计算两个字符串的相似度
+ * 基于编辑距离计算字符串相似度，返回0-1之间的值
+ * @param s1 第一个字符串
+ * @param s2 第二个字符串
+ * @returns 相似度值（0-1）
+ */
 export function calculateSimilarity(s1: string, s2: string): number {
     if (!s1 || !s2 || s1 === s2) {
         return 0;

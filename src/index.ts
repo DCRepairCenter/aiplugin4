@@ -12,6 +12,10 @@ import { transformTextToArray } from "./utils/utils_string";
 import { checkUpdate } from "./utils/utils_update";
 import { get_chart_url } from "./AI/service";
 
+/**
+ * 主函数，初始化插件的各个组件和命令
+ * 负责注册配置、AI管理器、工具管理器，检查更新，并设置AI命令处理逻辑
+ */
 function main() {
   ConfigManager.registerConfig();
   AIManager.getUsageMap();
@@ -1169,6 +1173,10 @@ ${Object.keys(tool.info.function.parameters.properties).map(key => {
     }
   }
 
+  /**
+   * 图片管理命令对象
+   * 用于处理图片相关操作，包括偷图、抽图、图片转文字等功能
+   */
   const cmdImage = seal.ext.newCmdItemInfo();
   cmdImage.name = 'img'; // 指令名字，可用中文
   cmdImage.help = `盗图指南:
@@ -1633,6 +1641,10 @@ ${Object.keys(tool.info.function.parameters.properties).map(key => {
     }
   }
 
+  /**
+   * 定时任务运行状态标志
+   * 防止多个定时任务同时运行造成冲突
+   */
   let isTaskRunning = false;
   seal.ext.registerTask(ext, "cron", "* * * * *", async () => {
     try {
