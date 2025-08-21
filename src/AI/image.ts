@@ -3,15 +3,30 @@ import { sendITTRequest } from "./service";
 import { generateId } from "../utils/utils";
 import { logger } from "./logger";
 
+/**
+ * 图片类
+ * 封装图片的基本信息和元数据
+ */
 export class Image {
+    /** 图片唯一标识符 */
     id: string;
+    /** 是否为URL格式 */
     isUrl: boolean;
+    /** 图片文件路径或URL */
     file: string;
+    /** 应用场景列表 */
     scenes: string[];
+    /** Base64编码内容 */
     base64: string;
+    /** 图片描述内容 */
     content: string;
+    /** 图片权重 */
     weight: number;
 
+    /**
+     * 图片构造函数
+     * @param file 图片文件路径或URL
+     */
     constructor(file: string) {
         this.id = generateId();
         this.isUrl = file.startsWith('http');
@@ -23,17 +38,33 @@ export class Image {
     }
 }
 
+/**
+ * 图片管理器类
+ * 负责管理偷取的图片、保存的图片以及图片相关功能
+ */
 export class ImageManager {
+    /** 偷取的图片列表 */
     stolenImages: Image[];
+    /** 保存的图片列表 */
     savedImages: Image[];
+    /** 偷图功能状态 */
     stealStatus: boolean;
 
+    /**
+     * 图片管理器构造函数
+     * 初始化图片列表和偷图状态
+     */
     constructor() {
         this.stolenImages = [];
         this.savedImages = [];
         this.stealStatus = false;
     }
 
+    /**
+     * JSON反序列化复活器函数
+     * @param value 待恢复的数据对象
+     * @returns 恢复后的ImageManager实例
+     */
     static reviver(value: any): ImageManager {
         const im = new ImageManager();
         const validKeys = ['stolenImages', 'savedImages', 'stealStatus'];
@@ -47,11 +78,19 @@ export class ImageManager {
         return im;
     }
 
+    /**
+     * 更新偷取的图片列表
+     * @param images 要添加的图片数组
+     */
     updateStolenImages(images: Image[]) {
         const { maxStolenImageNum } = ConfigManager.image;
         this.stolenImages = this.stolenImages.concat(images.filter(item => item.isUrl)).slice(-maxStolenImageNum);
     }
 
+    /**
+     * 更新保存的图片列表
+     * @param images 要添加的图片数组
+     */
     updateSavedImages(images: Image[]) {
         const { maxSavedImageNum } = ConfigManager.image;
         this.savedImages = this.savedImages.concat(images.filter(item => item.isUrl));
@@ -63,6 +102,10 @@ export class ImageManager {
         }
     }
 
+    /**
+     * 删除指定名称的保存图片
+     * @param nameList 要删除的图片名称列表
+     */
     delSavedImage(nameList: string[]) {
         this.savedImages = this.savedImages.filter(img => !nameList.includes(img.id));
     }

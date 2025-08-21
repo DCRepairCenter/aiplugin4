@@ -2,6 +2,10 @@ import { ConfigManager } from "../config/config";
 import { createCtx, createMsg } from "../utils/utils_seal";
 import { Tool, ToolInfo, ToolManager } from "./tool";
 
+/**
+ * 注册今日人品工具
+ * 提供查看指定用户今日人品值的功能
+ */
 export function registerJrrp() {
     const info: ToolInfo = {
         type: "function",

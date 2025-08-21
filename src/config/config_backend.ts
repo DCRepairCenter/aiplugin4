@@ -1,8 +1,17 @@
 import { ConfigManager } from "./config";
 
+/**
+ * 后端配置类
+ * 管理各种后端服务的URL配置
+ */
 export class BackendConfig {
+    /** 扩展信息对象 */
     static ext: seal.ExtInfo;
 
+    /**
+     * 注册后端配置项
+     * 包括流式输出、图片转换、联网搜索等后端服务配置
+     */
     static register() {
         BackendConfig.ext = ConfigManager.getExt('aiplugin4_6:后端');
 
@@ -13,6 +22,10 @@ export class BackendConfig {
         seal.ext.registerStringConfig(BackendConfig.ext, "用量图表", "http://error.白鱼.chat:3009", '可自行搭建');
     }
 
+    /**
+     * 获取后端配置
+     * @returns 后端服务URL配置对象
+     */
     static get() {
         return {
             streamUrl: seal.ext.getStringConfig(BackendConfig.ext, "流式输出"),

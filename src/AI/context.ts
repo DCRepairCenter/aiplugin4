@@ -7,27 +7,53 @@ import { AI, AIManager } from "./AI";
 import { logger } from "./logger";
 import { transformMsgId } from "../utils/utils";
 
+/**
+ * 消息接口
+ * 定义上下文中单条消息的结构
+ */
 export interface Message {
+    /** 消息角色（user/assistant/system/tool） */
     role: string;
+    /** 工具调用信息（可选） */
     tool_calls?: ToolCall[];
+    /** 工具调用ID（可选） */
     tool_call_id?: string;
 
+    /** 用户ID */
     uid: string;
+    /** 用户名称 */
     name: string;
+    /** 消息内容数组 */
     contentArray: string[];
+    /** 消息ID数组 */
     msgIdArray: string[];
+    /** 图片数组 */
     images: Image[];
 }
 
+/**
+ * 上下文管理类
+ * 负责管理对话历史、消息存储和上下文相关功能
+ */
 export class Context {
+    /** 消息列表 */
     messages: Message[];
+    /** 忽略名单 */
     ignoreList: string[];
-    summaryCounter: number; // 用于短期记忆自动总结计数
+    /** 短期记忆自动总结计数器 */
+    summaryCounter: number;
 
+    /** 上次回复内容 */
     lastReply: string;
+    /** 计数器 */
     counter: number;
+    /** 定时器 */
     timer: number;
 
+    /**
+     * 上下文构造函数
+     * 初始化消息列表、忽略名单和计数器
+     */
     constructor() {
         this.messages = [];
         this.ignoreList = [];
@@ -37,6 +63,11 @@ export class Context {
         this.timer = null;
     }
 
+    /**
+     * JSON反序列化复活器函数
+     * @param value 待恢复的数据对象
+     * @returns 恢复后的Context实例
+     */
     static reviver(value: any): Context {
         const context = new Context();
         const validKeys = ['messages', 'ignoreList', 'summaryCounter'];

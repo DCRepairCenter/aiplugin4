@@ -1,17 +1,33 @@
 import { ConfigManager } from "../config/config";
 import { Tool, ToolInfo, ToolManager } from "./tool";
 
+/**
+ * 定时器队列
+ * 存储所有待执行的定时器任务
+ */
 export const timerQueue: {
+    /** AI实例ID */
     id: string,
+    /** 消息类型 */
     messageType: 'private' | 'group',
+    /** 用户ID */
     uid: string,
+    /** 群组ID */
     gid: string,
+    /** 端点ID */
     epId: string,
+    /** 触发时间戳 */
     timestamp: number,
+    /** 设置时间描述 */
     setTime: string,
+    /** 提示内容 */
     content: string
 }[] = [];
 
+/**
+ * 注册获取时间工具
+ * 提供获取当前时间的功能
+ */
 export function registerGetTime() {
     const info: ToolInfo = {
         type: "function",
@@ -35,6 +51,10 @@ export function registerGetTime() {
     ToolManager.toolMap[info.function.name] = tool;
 }
 
+/**
+ * 注册设置定时器工具
+ * 提供设置定时器的功能，可以在指定时间后触发提醒
+ */
 export function registerSetTimer() {
     const info: ToolInfo = {
         type: 'function',

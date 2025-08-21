@@ -5,6 +5,13 @@ import { logger } from "../AI/logger";
 import { ConfigManager } from "../config/config";
 import { ToolInfo } from "../tool/tool";
 
+/**
+ * 构建系统消息
+ * 根据配置模板和AI状态构建系统提示消息
+ * @param ctx 消息上下文
+ * @param ai AI实例
+ * @returns 构建的系统消息对象
+ */
 export function buildSystemMessage(ctx: seal.MsgContext, ai: AI): Message {
     const { roleSettingTemplate, systemMessageTemplate, isPrefix, showNumber, showMsgId } = ConfigManager.message;
     const { isTool, usePromptEngineering } = ConfigManager.tool;

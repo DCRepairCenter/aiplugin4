@@ -3,6 +3,11 @@ import { logger } from "../AI/logger";
 import { ConfigManager } from "../config/config";
 import { transformTextToArray } from "./utils_string";
 
+/**
+ * 转换消息ID为36进制字符串
+ * @param msgId 原始消息ID（字符串或数字）
+ * @returns 36进制字符串形式的消息ID
+ */
 export function transformMsgId(msgId: string | number): string {
     if (typeof msgId === 'string') {
         msgId = parseInt(msgId);
@@ -10,16 +15,33 @@ export function transformMsgId(msgId: string | number): string {
     return isNaN(msgId) ? '' : msgId.toString(36); // 将数字转换为36进制字符串
 }
 
+/**
+ * 将36进制消息ID转换回数字
+ * @param msgId 36进制字符串形式的消息ID
+ * @returns 数字形式的消息ID
+ */
 export function transformMsgIdBack(msgId: string): number {
     return parseInt(msgId, 36); // 将36进制字符串转换为数字 
 }
 
+/**
+ * 生成唯一ID
+ * @returns 6位唯一标识符
+ */
 export function generateId() {
     const timestamp = Date.now().toString(36); // 将时间戳转换为36进制字符串
     const random = Math.random().toString(36).substring(2, 6); // 随机数部分
     return (timestamp + random).slice(-6); // 截取最后6位
 }
 
+/**
+ * 向发送者回复消息
+ * @param ctx 消息上下文
+ * @param msg 消息对象
+ * @param ai AI实例
+ * @param s 要发送的消息内容
+ * @returns 消息ID或空字符串
+ */
 export async function replyToSender(ctx: seal.MsgContext, msg: seal.Message, ai: AI, s: string): Promise<string> {
     if (!s) {
         return '';

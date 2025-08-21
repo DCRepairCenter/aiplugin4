@@ -30,6 +30,10 @@ export function compareVersions(version1: string, version2: string): number {
     return 0;
 }
 
+/**
+ * 检查版本更新
+ * 比较当前版本和存储的版本，如果有更新则显示更新日志
+ */
 export function checkUpdate() {
     const oldVersion = ConfigManager.ext.storageGet("version") || "0.0.0";
 

@@ -5,6 +5,15 @@ import { handleMessages, parseBody } from "../utils/utils_message";
 import { ImageManager } from "./image";
 import { logger } from "./logger";
 
+/**
+ * 发送聊天请求到AI服务
+ * @param ctx 消息上下文
+ * @param msg 消息对象
+ * @param ai AI实例
+ * @param messages 消息数组
+ * @param tool_choice 工具选择策略
+ * @returns AI回复内容
+ */
 export async function sendChatRequest(ctx: seal.MsgContext, msg: seal.Message, ai: AI, messages: {
     role: string,
     content: string,
@@ -81,6 +90,12 @@ export async function sendChatRequest(ctx: seal.MsgContext, msg: seal.Message, a
     }
 }
 
+/**
+ * 发送图片转文字请求
+ * @param messages 包含图片的消息数组
+ * @param useBase64 是否使用Base64编码
+ * @returns 图片识别结果文本
+ */
 export async function sendITTRequest(messages: {
     role: string,
     content: {
@@ -136,6 +151,13 @@ export async function sendITTRequest(messages: {
     }
 }
 
+/**
+ * 获取远程数据
+ * @param url 请求URL
+ * @param apiKey API密钥
+ * @param bodyObject 请求体对象
+ * @returns 响应数据
+ */
 export async function fetchData(url: string, apiKey: string, bodyObject: any): Promise<any> {
     // 打印请求发送前的上下文
     const s = JSON.stringify(bodyObject.messages, (key, value) => {
@@ -177,6 +199,11 @@ export async function fetchData(url: string, apiKey: string, bodyObject: any): P
     }
 }
 
+/**
+ * 启动流式传输
+ * @param messages 消息数组
+ * @returns 流式传输ID
+ */
 export async function startStream(messages: {
     role: string,
     content: string
@@ -237,6 +264,12 @@ export async function startStream(messages: {
     }
 }
 
+/**
+ * 轮询流式传输状态
+ * @param id 流式传输ID
+ * @param after 起始位置
+ * @returns 流式传输状态和内容
+ */
 export async function pollStream(id: string, after: number): Promise<{ status: string, reply: string, nextAfter: number }> {
     const { streamUrl } = ConfigManager.backend;
 
@@ -280,6 +313,11 @@ export async function pollStream(id: string, after: number): Promise<{ status: s
     }
 }
 
+/**
+ * 结束流式传输
+ * @param id 流式传输ID
+ * @returns 最终回复内容
+ */
 export async function endStream(id: string): Promise<string> {
     const { streamUrl } = ConfigManager.backend;
 
@@ -323,6 +361,12 @@ export async function endStream(id: string): Promise<string> {
     }
 }
 
+/**
+ * 获取用量图表URL
+ * @param chart_type 图表类型
+ * @param usage_data 使用量数据
+ * @returns 图表URL
+ */
 export async function get_chart_url(chart_type: string, usage_data: {
     [key: string]: {
         prompt_tokens: number;
