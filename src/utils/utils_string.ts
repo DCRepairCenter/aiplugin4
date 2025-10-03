@@ -6,6 +6,16 @@ import { ConfigManager } from "../config/config";
 import { transformMsgIdBack } from "./utils";
 import { AI } from "../AI/AI";
 
+function removeThinkingChains(text: string): string {
+    // 移除 <Think>...</Think> 标签（大小写不敏感，支持多行）
+    text = text.replace(/<think[\s\S]*?<\/think>/gi, '');
+    
+    // 移除 <!-- ... --> 注释（支持多行）
+    text = text.replace(/<!--[\s\S]*?-->/g, '');
+    
+    return text;
+}
+
 export function transformTextToArray(s: string): { type: string, data: { [key: string]: string } }[] {
     const segments = s.split(/(\[CQ:.*?\])/).filter(segment => segment);
     const messageArray: { type: string, data: { [key: string]: string } }[] = [];
@@ -78,6 +88,9 @@ export function transformArrayToText(messageArray: { type: string, data: { [key:
 }
 
 export async function handleReply(ctx: seal.MsgContext, msg: seal.Message, ai: AI, s: string): Promise<{ contextArray: string[], replyArray: string[], images: Image[] }> {
+    // 移除思维链内容
+    s = removeThinkingChains(s);
+    
     const { replymsg, isTrim } = ConfigManager.reply;
 
     // 分离AI臆想出来的多轮对话

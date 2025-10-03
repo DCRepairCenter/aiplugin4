@@ -409,8 +409,8 @@ function main() {
                       return ret;
                     }
                     default: {
-                      if (s.length > 20) {
-                        seal.replyToSender(ctx, msg, '设定过长，请控制在20字以内');
+                      if (s.length > 65536) {
+                        seal.replyToSender(ctx, msg, '设定过长，请控制在65536字以内');
                         return ret;
                       }
                       ai2.memory.persona = s;
@@ -477,8 +477,8 @@ function main() {
                       return ret;
                     }
                     default: {
-                      if (s.length > 30) {
-                        seal.replyToSender(ctx, msg, '设定过长，请控制在30字以内');
+                      if (s.length > 65536) {
+                        seal.replyToSender(ctx, msg, '设定过长，请控制在65536字以内');
                         return ret;
                       }
                       ai.memory.persona = s;
