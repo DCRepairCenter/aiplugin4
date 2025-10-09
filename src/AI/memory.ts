@@ -177,8 +177,8 @@ export class Memory {
             time: new Date().toLocaleString(),
             createTime: Math.floor(Date.now() / 1000),
             lastMentionTime: Math.floor(Date.now() / 1000),
-            keywords: kws,
-            content: content,
+            keywords: kws || [],
+            content: content || '',
             weight: 0
         };
 

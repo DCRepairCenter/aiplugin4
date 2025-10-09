@@ -185,10 +185,6 @@ export class AI {
             return;
         }
 
-        const timeout = setTimeout(() => {
-            logger.warning(this.id, `处理消息超时`);
-        }, 60 * 1000);
-
         let result = {
             contextArray: [],
             replyArray: [],
@@ -236,7 +232,6 @@ export class AI {
             }
         }
 
-        clearTimeout(timeout);
         AIManager.saveAI(this.id);
     }
 
@@ -247,6 +242,9 @@ export class AI {
 
         const messages = handleMessages(ctx, this);
         const id = await startStream(messages);
+        if (id === '') {
+            return;
+        }
 
         this.stream.id = id;
         let status = 'processing';

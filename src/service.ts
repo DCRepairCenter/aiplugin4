@@ -4,6 +4,7 @@ import { ConfigManager } from "./config/config";
 import { handleMessages, parseBody } from "./utils/utils_message";
 import { ImageManager } from "./AI/image";
 import { logger } from "./logger";
+import { withTimeout } from "./utils/utils";
 
 export async function sendChatRequest(ctx: seal.MsgContext, msg: seal.Message, ai: AI, messages: {
     role: string,
@@ -11,16 +12,13 @@ export async function sendChatRequest(ctx: seal.MsgContext, msg: seal.Message, a
     tool_calls?: ToolCall[],
     tool_call_id?: string
 }[], tool_choice: string): Promise<string> {
-    const { url, apiKey, bodyTemplate } = ConfigManager.request;
+    const { url, apiKey, bodyTemplate, timeout } = ConfigManager.request;
     const { isTool, usePromptEngineering } = ConfigManager.tool;
     const tools = ai.tool.getToolsInfo(msg.messageType);
 
     const maxRetries = 3;
 
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-        try {
-            const bodyObject = parseBody(bodyTemplate, messages, tools, tool_choice);
-            const time = Date.now();
+        const data = await withTimeout(() => fetchData(url, apiKey, bodyObject), timeout);
 
             if (attempt > 1) {
                 logger.info(`第 ${attempt} 次重试请求...`);
@@ -40,7 +38,12 @@ export async function sendChatRequest(ctx: seal.MsgContext, msg: seal.Message, a
 
                 const reply = message.content || '';
 
-                logger.info(`响应内容:`, reply, '\nlatency:', Date.now() - time, 'ms', '\nfinish_reason:', finish_reason);
+                        try {
+                            await ToolManager.handlePromptToolCall(ctx, msg, ai, match[1]);
+                        } catch (e) {
+                            logger.error(`在handlePromptToolCall中出错:`, e.message);
+                            return '';
+                        }
 
                 if (isTool) {
                     if (usePromptEngineering) {
@@ -55,25 +58,12 @@ export async function sendChatRequest(ctx: seal.MsgContext, msg: seal.Message, a
                                 return '';
                             }
 
-                            const messages = handleMessages(ctx, ai);
-                            return await sendChatRequest(ctx, msg, ai, messages, tool_choice);
-                        }
-                    } else {
-                        if (message.hasOwnProperty('tool_calls') && Array.isArray(message.tool_calls) && message.tool_calls.length > 0) {
-                            logger.info(`触发工具调用`);
-
-                            ai.context.addToolCallsMessage(message.tool_calls, ai);
-
-                            let tool_choice = 'auto';
-                            try {
-                                tool_choice = await ToolManager.handleToolCalls(ctx, msg, ai, message.tool_calls);
-                            } catch (e) {
-                                logger.error(`在handleToolCalls中出错：`, e.message);
-                                return '';
-                            }
-
-                            const messages = handleMessages(ctx, ai);
-                            return await sendChatRequest(ctx, msg, ai, messages, tool_choice);
+                        let tool_choice = 'auto';
+                        try {
+                            tool_choice = await ToolManager.handleToolCalls(ctx, msg, ai, message.tool_calls);
+                        } catch (e) {
+                            logger.error(`在handleToolCalls中出错:`, e.message);
+                            return '';
                         }
                     }
                 }
@@ -102,6 +92,9 @@ export async function sendChatRequest(ctx: seal.MsgContext, msg: seal.Message, a
             logger.info(`等待 ${delay}ms 后重试...`);
             await new Promise(resolve => setTimeout(resolve, delay));
         }
+    } catch (e) {
+        logger.error("在sendChatRequest中出错:", e.message);
+        return '';
     }
 
     // 所有重试都失败
@@ -117,13 +110,14 @@ export async function sendITTRequest(messages: {
         text?: string
     }[]
 }[], useBase64: boolean): Promise<string> {
+    const { timeout } = ConfigManager.request;
     const { url, apiKey, bodyTemplate, urlToBase64 } = ConfigManager.image;
 
     try {
         const bodyObject = parseBody(bodyTemplate, messages, null, null);
         const time = Date.now();
 
-        const data = await fetchData(url, apiKey, bodyObject);
+        const data = await withTimeout(() => fetchData(url, apiKey, bodyObject), timeout);
 
         if (data.choices && data.choices.length > 0) {
             AIManager.updateUsage(data.model, data.usage);
@@ -137,8 +131,8 @@ export async function sendITTRequest(messages: {
         } else {
             throw new Error(`服务器响应中没有choices或choices为空\n响应体:${JSON.stringify(data, null, 2)}`);
         }
-    } catch (error) {
-        logger.error("在sendITTRequest中请求出错：", error);
+    } catch (e) {
+        logger.error("在sendITTRequest中请求出错:", e.message);
         if (urlToBase64 === '自动' && !useBase64) {
             logger.info(`自动尝试使用转换为base64`);
 
@@ -201,7 +195,7 @@ export async function fetchData(url: string, apiKey: string, bodyObject: any): P
         }
         return data;
     } catch (e) {
-        throw new Error(`解析响应体时出错:${e}\n响应体:${text}`);
+        throw new Error(`解析响应体时出错:${e.message}\n响应体:${text}`);
     }
 }
 
@@ -209,7 +203,7 @@ export async function startStream(messages: {
     role: string,
     content: string
 }[]): Promise<string> {
-    const { url, apiKey, bodyTemplate } = ConfigManager.request;
+    const { url, apiKey, bodyTemplate, timeout } = ConfigManager.request;
     const { streamUrl } = ConfigManager.backend;
 
     try {
@@ -224,7 +218,7 @@ export async function startStream(messages: {
         });
         logger.info(`请求发送前的上下文:\n`, s);
 
-        const response = await fetch(`${streamUrl}/start`, {
+        const response = await withTimeout(() => fetch(`${streamUrl}/start`, {
             method: 'POST',
             headers: {
                 "Content-Type": "application/json",
@@ -235,7 +229,7 @@ export async function startStream(messages: {
                 api_key: apiKey,
                 body_obj: bodyObject
             })
-        });
+        }), timeout);
 
         // logger.info("响应体", JSON.stringify(response, null, 2));
 
@@ -259,8 +253,8 @@ export async function startStream(messages: {
         } catch (e) {
             throw new Error(`解析响应体时出错:${e}\n响应体:${text}`);
         }
-    } catch (error) {
-        logger.error("在startStream中出错：", error);
+    } catch (e) {
+        logger.error("在startStream中出错:", e.message);
         return '';
     }
 }
@@ -302,8 +296,8 @@ export async function pollStream(id: string, after: number): Promise<{ status: s
         } catch (e) {
             throw new Error(`解析响应体时出错:${e}\n响应体:${text}`);
         }
-    } catch (error) {
-        logger.error("在pollStream中出错：", error);
+    } catch (e) {
+        logger.error("在pollStream中出错:", e.message);
         return { status: 'failed', reply: '', nextAfter: 0 };
     }
 }
@@ -345,8 +339,8 @@ export async function endStream(id: string): Promise<string> {
         } catch (e) {
             throw new Error(`解析响应体时出错:${e}\n响应体:${text}`);
         }
-    } catch (error) {
-        logger.error("在endStream中出错：", error);
+    } catch (e) {
+        logger.error("在endStream中出错:", e.message);
         return '';
     }
 }
@@ -388,8 +382,8 @@ export async function get_chart_url(chart_type: string, usage_data: {
         } catch (e) {
             throw new Error(`解析响应体时出错:${e}\n响应体:${text}`);
         }
-    } catch (error) {
-        logger.error("在get_chart_url中请求出错：", error);
+    } catch (e) {
+        logger.error("在get_chart_url中请求出错:", e.message);
         return '';
     }
 }
