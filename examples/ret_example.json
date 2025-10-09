@@ -1,0 +1,27 @@
+{
+    "id": "chatcmpl-89DJfnUAB5OdT3Giu6yfejaQblz27",
+    "object": "chat.completion",
+    "created": 1759653288,
+    "model": "claude-sonnet-4-5-all",
+    "choices": [
+        {
+            "index": 0,
+            "message": {
+                "role": "assistant",
+                "content": " 你好！很高兴见到你。有什么我可以帮助你的吗?"
+            },
+            "finish_reason": "stop"
+        }
+    ],
+    "usage": {
+        "prompt_tokens": 23,
+        "completion_tokens": 28,
+        "total_tokens": 51,
+        "prompt_tokens_details": {
+            "text_tokens": 16
+        },
+        "completion_tokens_details": {
+            "content_tokens": 28
+        }
+    }
+}

@@ -1,14 +1,17 @@
 import { AIManager } from "./AI/AI";
+import { ArchiveManager } from "./AI/archive";
 import { ImageManager } from "./AI/image";
 import { ToolManager } from "./tool/tool";
 import { ConfigManager, CQTYPESALLOW } from "./config/config";
+import { SoupConfig } from "./config/config_soup";
 import { buildSystemMessage } from "./utils/utils_message";
 import { triggerConditionMap } from "./tool/tool_trigger";
 import { logger } from "./logger";
 import { transformTextToArray } from "./utils/utils_string";
 import { checkUpdate } from "./utils/utils_update";
 import { get_chart_url } from "./service";
-import { TimerManager } from "./timer";
+import { TimerManager, TimeParser } from "./timer";
+import { parsePersonaCommand, isValidPersonaName, detectDeleteIntent } from "./utils/utils_persona";
 
 function main() {
   ConfigManager.registerConfig();
@@ -36,7 +39,11 @@ function main() {
 【.ai tool】AI的工具相关
 【.ai ign】AI的忽略名单相关
 【.ai tk】AI的token相关
-【.ai shut】终止AI当前流式输出`;
+【.ai arc】AI的存档相关
+【.ai undo】撤销并重新生成AI回复
+【.ai timer】定时器管理
+【.ai shut】终止AI当前流式输出
+【.ai soup】海龟汤游戏`;
   cmdAI.allowDelegate = true;
   cmdAI.solve = (ctx, msg, cmdArgs) => {
     try {
@@ -316,7 +323,20 @@ function main() {
             }
             default: {
               ai.context.clearMessages();
-              seal.replyToSender(ctx, msg, '上下文已清除');
+              ai.context.clearSnapshots();
+              const { autoStart } = ConfigManager.archive;
+              if (autoStart && ai.archiveManager) {
+                try {
+                  const result = ai.archiveManager.startWorking();
+                  seal.replyToSender(ctx, msg, `上下文和快照已清除\n${result}`);
+                } catch (e) {
+                  logger.error(`自动开启存档失败: ${e.message}`);
+                  seal.replyToSender(ctx, msg, '上下文和快照已清除');
+                }
+              } else {
+                seal.replyToSender(ctx, msg, '上下文和快照已清除');
+              }
+
               AIManager.saveAI(id);
               return ret;
             }
@@ -397,45 +417,186 @@ function main() {
               switch (val3) {
                 case 'st': {
                   const s = cmdArgs.getRestArgsFrom(4);
-                  switch (s) {
-                    case '': {
-                      seal.replyToSender(ctx, msg, '参数缺失，【.ai memo p st <内容>】设置个人设定，【.ai memo p st clr】清除个人设定');
-                      return ret;
-                    }
-                    case 'clr': {
-                      ai2.memory.persona = '无';
-                      seal.replyToSender(ctx, msg, '设定已清除');
-                      AIManager.saveAI(muid);
-                      return ret;
-                    }
-                    default: {
-                      if (s.length > 65536) {
-                        seal.replyToSender(ctx, msg, '设定过长，请控制在65536字以内');
-                        return ret;
-                      }
-                      ai2.memory.persona = s;
-                      seal.replyToSender(ctx, msg, '设定已修改');
-                      AIManager.saveAI(muid);
-                      return ret;
-                    }
-                  }
-                }
-                case 'del': {
-                  const idList = cmdArgs.args.slice(3);
-                  const kw = cmdArgs.kwargs.map(item => item.name);
-                  if (idList.length === 0 && kw.length === 0) {
-                    seal.replyToSender(ctx, msg, '参数缺失，【.ai memo p del <ID1> <ID2> --关键词1 --关键词2】删除个人记忆');
+
+                  if (s === '') {
+                    seal.replyToSender(ctx, msg,
+                      '参数缺失，请使用:\n' +
+                      '【.ai memo p st <内容>】直接设置当前自设\n' +
+                      '【.ai memo p st <名称> <内容>】创建/更新命名自设\n' +
+                      '【.ai memo p st clr】清除所有自设');
                     return ret;
                   }
-                  ai2.memory.delMemory(idList, kw);
-                  const s = ai2.memory.buildMemory(true, mctx.player.name, mctx.player.userId, '', '');
-                  seal.replyToSender(ctx, msg, s || '无');
-                  AIManager.saveAI(muid);
+
+                  const parsed = parsePersonaCommand(s);
+
+                  if (parsed.mode === 'clear') {
+                    if (muid !== uid) {
+                      seal.replyToSender(ctx, msg, '只能清除自己的个人设定');
+                      return ret;
+                    }
+                    ai2.memory.clearAllPersonas();
+                    seal.replyToSender(ctx, msg, '所有自设已清除');
+                    AIManager.saveAI(muid);
+                    return ret;
+                  }
+
+                  if (parsed.mode === 'direct') {
+                    if (parsed.content.length > 65536) {
+                      seal.replyToSender(ctx, msg, '设定过长，请控制在65536字以内');
+                      return ret;
+                    }
+                    ai2.memory.setCurrentPersona(parsed.content);
+                    seal.replyToSender(ctx, msg,
+                      `当前自设"${ai2.memory.currentPersona}"已更新\n` +
+                      `共 ${Object.keys(ai2.memory.personaMap).length} 个自设`);
+                    AIManager.saveAI(muid);
+                    return ret;
+                  }
+
+                  if (parsed.mode === 'named') {
+                    if (parsed.content.length > 65536) {
+                      seal.replyToSender(ctx, msg, '设定过长，请控制在65536字以内');
+                      return ret;
+                    }
+                    const isNew = !ai2.memory.personaMap.hasOwnProperty(parsed.name);
+                    ai2.memory.setNamedPersona(parsed.name, parsed.content);
+                    seal.replyToSender(ctx, msg,
+                      `自设"${parsed.name}"已${isNew ? '创建' : '更新'}并切换\n` +
+                      `共 ${Object.keys(ai2.memory.personaMap).length} 个自设`);
+                    AIManager.saveAI(muid);
+                    return ret;
+                  }
+
+                  return ret;
+                }
+
+                case 'switch': {
+                  if (muid !== uid) {
+                    seal.replyToSender(ctx, msg, '只能切换自己的自设');
+                    return ret;
+                  }
+
+                  const name = cmdArgs.getRestArgsFrom(4);
+                  if (!name) {
+                    seal.replyToSender(ctx, msg, '参数缺失，【.ai memo p switch <名称>】切换自设');
+                    return ret;
+                  }
+
+                  if (ai2.memory.switchPersona(name)) {
+                    seal.replyToSender(ctx, msg, `已切换到自设"${name}"`);
+                    AIManager.saveAI(muid);
+                  } else {
+                    seal.replyToSender(ctx, msg, `自设"${name}"不存在\n使用【.ai memo p list】查看所有自设`);
+                  }
+                  return ret;
+                }
+
+                case 'lst':
+                case 'list': {
+                  if (muid !== uid) {
+                    seal.replyToSender(ctx, msg, '只能查看自己的自设列表');
+                    return ret;
+                  }
+
+                  const { current, list } = ai2.memory.listPersonas();
+                  if (list.length === 0) {
+                    seal.replyToSender(ctx, msg, '暂无自设');
+                  } else {
+                    const listStr = list.map(name =>
+                      name === current ? `[x] ${name}` : `[ ] ${name}`
+                    ).join('\n');
+                    seal.replyToSender(ctx, msg, `自设列表 (共${list.length}个):\n${listStr}`);
+                  }
+                  return ret;
+                }
+
+                case 'rename': {
+                  if (muid !== uid) {
+                    seal.replyToSender(ctx, msg, '只能重命名自己的自设');
+                    return ret;
+                  }
+
+                  const oldName = cmdArgs.getArgN(4);
+                  const newName = cmdArgs.getArgN(5);
+
+                  if (!oldName || !newName) {
+                    seal.replyToSender(ctx, msg, '参数缺失，【.ai memo p rename <旧名称> <新名称>】重命名自设');
+                    return ret;
+                  }
+
+                  if (!isValidPersonaName(newName)) {
+                    seal.replyToSender(ctx, msg, '新名称不合法，请使用1-20字符，不含换行制表符，且非保留词');
+                    return ret;
+                  }
+
+                  if (ai2.memory.renamePersona(oldName, newName)) {
+                    seal.replyToSender(ctx, msg, `自设"${oldName}"已重命名为"${newName}"`);
+                    AIManager.saveAI(muid);
+                  } else {
+                    if (!ai2.memory.personaMap.hasOwnProperty(oldName)) {
+                      seal.replyToSender(ctx, msg, `自设"${oldName}"不存在`);
+                    } else {
+                      seal.replyToSender(ctx, msg, `自设"${newName}"已存在，无法重命名`);
+                    }
+                  }
+                  return ret;
+                }
+
+                case 'del': {
+                  if (muid !== uid) {
+                    seal.replyToSender(ctx, msg, '只能删除自己的个人记忆/自设');
+                    return ret;
+                  }
+
+                  const args = cmdArgs.args.slice(3);
+                  const kw = cmdArgs.kwargs.map(item => item.name);
+
+                  if (args.length === 0 && kw.length === 0) {
+                    seal.replyToSender(ctx, msg, '参数缺失\n【.ai memo p del <名称1> <名称2>...】删除自设\n【.ai memo p del <ID1> <ID2> --关键词1】删除记忆');
+                    return ret;
+                  }
+
+                  // 意图识别
+                  const intent = detectDeleteIntent(args, cmdArgs.kwargs, ai2.memory.personaMap);
+
+                  if (intent === 'persona') {
+                    // 删除自设
+                    const result = ai2.memory.deletePersona(args);
+                    let replyMsg = '';
+                    if (result.success.length > 0) {
+                      replyMsg += `已删除自设: ${result.success.join('、')}\n`;
+                    }
+                    if (result.failed.length > 0) {
+                      replyMsg += `失败: ${result.failed.join('、')}`;
+                    }
+                    seal.replyToSender(ctx, msg, replyMsg.trim());
+                    AIManager.saveAI(muid);
+                  } else {
+                    // 删除记忆
+                    ai2.memory.delMemory(args, kw);
+                    const s = ai2.memory.buildMemory(true, mctx.player.name, mctx.player.userId, '', '');
+                    seal.replyToSender(ctx, msg, s || '无');
+                    AIManager.saveAI(muid);
+                  }
                   return ret;
                 }
                 case 'show': {
-                  const s = ai2.memory.buildMemory(true, mctx.player.name, mctx.player.userId, '', '');
-                  seal.replyToSender(ctx, msg, s || '无');
+                  if (muid !== uid) {
+                    seal.replyToSender(ctx, msg, '只能查看自己的个人设定');
+                    return ret;
+                  }
+
+                  const current = ai2.memory.getCurrentPersona();
+                  const name = ai2.memory.currentPersona || '无';
+                  const count = Object.keys(ai2.memory.personaMap).length;
+
+                  let replyMsg = `当前自设: ${name}\n`;
+                  if (count > 0) {
+                    replyMsg += `总计: ${count} 个自设\n`;
+                  }
+                  replyMsg += `内容:\n${current}`;
+
+                  seal.replyToSender(ctx, msg, replyMsg);
                   return ret;
                 }
                 case 'clr': {
@@ -445,7 +606,15 @@ function main() {
                   return ret;
                 }
                 default: {
-                  seal.replyToSender(ctx, msg, '参数缺失，【.ai memo p show】展示个人记忆，【.ai memo p clr】清除个人记忆');
+                  seal.replyToSender(ctx, msg,
+                    '个人记忆指令:\n' +
+                    '【.ai memo p st】设置自设\n' +
+                    '【.ai memo p switch】切换自设\n' +
+                    '【.ai memo p lst】列出自设\n' +
+                    '【.ai memo p rename】重命名自设\n' +
+                    '【.ai memo p show】查看当前自设\n' +
+                    '【.ai memo p del】删除记忆/自设\n' +
+                    '【.ai memo p clr】清除记忆');
                   return ret;
                 }
               }
@@ -465,45 +634,157 @@ function main() {
               switch (val3) {
                 case 'st': {
                   const s = cmdArgs.getRestArgsFrom(4);
-                  switch (s) {
-                    case '': {
-                      seal.replyToSender(ctx, msg, '参数缺失，【.ai memo g st <内容>】设置群聊设定，【.ai memo g st clr】清除群聊设定');
-                      return ret;
-                    }
-                    case 'clr': {
-                      ai.memory.persona = '无';
-                      seal.replyToSender(ctx, msg, '设定已清除');
-                      AIManager.saveAI(id);
-                      return ret;
-                    }
-                    default: {
-                      if (s.length > 65536) {
-                        seal.replyToSender(ctx, msg, '设定过长，请控制在65536字以内');
-                        return ret;
-                      }
-                      ai.memory.persona = s;
-                      seal.replyToSender(ctx, msg, '设定已修改');
-                      AIManager.saveAI(id);
-                      return ret;
-                    }
-                  }
-                }
-                case 'del': {
-                  const idList = cmdArgs.args.slice(3);
-                  const kw = cmdArgs.kwargs.map(item => item.name);
-                  if (idList.length === 0 && kw.length === 0) {
-                    seal.replyToSender(ctx, msg, '参数缺失，【.ai memo g del <ID1> <ID2>】删除群聊记忆');
+
+                  if (s === '') {
+                    seal.replyToSender(ctx, msg,
+                      '参数缺失，请使用:\n' +
+                      '【.ai memo g st <内容>】直接设置当前自设\n' +
+                      '【.ai memo g st <名称> <内容>】创建/更新命名自设\n' +
+                      '【.ai memo g st clr】清除所有自设');
                     return ret;
                   }
-                  ai.memory.delMemory(idList, kw);
-                  const s = ai.memory.buildMemory(false, '', '', ctx.group.groupName, ctx.group.groupId);
-                  seal.replyToSender(ctx, msg, s || '无');
-                  AIManager.saveAI(id);
+
+                  const parsed = parsePersonaCommand(s);
+
+                  if (parsed.mode === 'clear') {
+                    ai.memory.clearAllPersonas();
+                    seal.replyToSender(ctx, msg, '所有自设已清除');
+                    AIManager.saveAI(id);
+                    return ret;
+                  }
+
+                  if (parsed.mode === 'direct') {
+                    if (parsed.content.length > 65536) {
+                      seal.replyToSender(ctx, msg, '设定过长，请控制在65536字以内');
+                      return ret;
+                    }
+                    ai.memory.setCurrentPersona(parsed.content);
+                    seal.replyToSender(ctx, msg,
+                      `当前自设"${ai.memory.currentPersona}"已更新\n` +
+                      `共 ${Object.keys(ai.memory.personaMap).length} 个自设`);
+                    AIManager.saveAI(id);
+                    return ret;
+                  }
+
+                  if (parsed.mode === 'named') {
+                    if (parsed.content.length > 65536) {
+                      seal.replyToSender(ctx, msg, '设定过长，请控制在65536字以内');
+                      return ret;
+                    }
+                    const isNew = !ai.memory.personaMap.hasOwnProperty(parsed.name);
+                    ai.memory.setNamedPersona(parsed.name, parsed.content);
+                    seal.replyToSender(ctx, msg,
+                      `自设"${parsed.name}"已${isNew ? '创建' : '更新'}并切换\n` +
+                      `共 ${Object.keys(ai.memory.personaMap).length} 个自设`);
+                    AIManager.saveAI(id);
+                    return ret;
+                  }
+
+                  return ret;
+                }
+
+                case 'switch': {
+                  const name = cmdArgs.getRestArgsFrom(4);
+                  if (!name) {
+                    seal.replyToSender(ctx, msg, '参数缺失，【.ai memo g switch <名称>】切换自设');
+                    return ret;
+                  }
+
+                  if (ai.memory.switchPersona(name)) {
+                    seal.replyToSender(ctx, msg, `已切换到自设"${name}"`);
+                    AIManager.saveAI(id);
+                  } else {
+                    seal.replyToSender(ctx, msg, `自设"${name}"不存在\n使用【.ai memo g list】查看所有自设`);
+                  }
+                  return ret;
+                }
+
+                case 'lst':
+                case 'list': {
+                  const { current, list } = ai.memory.listPersonas();
+                  if (list.length === 0) {
+                    seal.replyToSender(ctx, msg, '暂无自设');
+                  } else {
+                    const listStr = list.map(name =>
+                      name === current ? `[x] ${name}` : `[ ] ${name}`
+                    ).join('\n');
+                    seal.replyToSender(ctx, msg, `自设列表 (共${list.length}个):\n${listStr}`);
+                  }
+                  return ret;
+                }
+
+                case 'rename': {
+                  const oldName = cmdArgs.getArgN(4);
+                  const newName = cmdArgs.getArgN(5);
+
+                  if (!oldName || !newName) {
+                    seal.replyToSender(ctx, msg, '参数缺失，【.ai memo g rename <旧名称> <新名称>】重命名自设');
+                    return ret;
+                  }
+
+                  if (!isValidPersonaName(newName)) {
+                    seal.replyToSender(ctx, msg, '新名称不合法，请使用1-20字符，不含换行制表符，且非保留词');
+                    return ret;
+                  }
+
+                  if (ai.memory.renamePersona(oldName, newName)) {
+                    seal.replyToSender(ctx, msg, `自设"${oldName}"已重命名为"${newName}"`);
+                    AIManager.saveAI(id);
+                  } else {
+                    if (!ai.memory.personaMap.hasOwnProperty(oldName)) {
+                      seal.replyToSender(ctx, msg, `自设"${oldName}"不存在`);
+                    } else {
+                      seal.replyToSender(ctx, msg, `自设"${newName}"已存在，无法重命名`);
+                    }
+                  }
+                  return ret;
+                }
+
+                case 'del': {
+                  const args = cmdArgs.args.slice(3);  // .ai memo g del 海棠 => args=['memo','g','del','海棠'], slice(3)=['海棠']
+                  const kw = cmdArgs.kwargs.map(item => item.name);
+
+                  if (args.length === 0 && kw.length === 0) {
+                    seal.replyToSender(ctx, msg, '参数缺失\n【.ai memo g del <名称1> <名称2>...】删除自设\n【.ai memo g del <ID1> <ID2> --关键词1】删除记忆');
+                    return ret;
+                  }
+
+                  // 意图识别
+                  const intent = detectDeleteIntent(args, cmdArgs.kwargs, ai.memory.personaMap);
+
+                  if (intent === 'persona') {
+                    // 删除自设
+                    const result = ai.memory.deletePersona(args);
+                    let replyMsg = '';
+                    if (result.success.length > 0) {
+                      replyMsg += `已删除自设: ${result.success.join('、')}\n`;
+                    }
+                    if (result.failed.length > 0) {
+                      replyMsg += `失败: ${result.failed.join('、')}`;
+                    }
+                    seal.replyToSender(ctx, msg, replyMsg.trim());
+                    AIManager.saveAI(id);
+                  } else {
+                    // 删除记忆
+                    ai.memory.delMemory(args, kw);
+                    const s = ai.memory.buildMemory(false, '', '', ctx.group.groupName, ctx.group.groupId);
+                    seal.replyToSender(ctx, msg, s || '无');
+                    AIManager.saveAI(id);
+                  }
                   return ret;
                 }
                 case 'show': {
-                  const s = ai.memory.buildMemory(false, '', '', ctx.group.groupName, ctx.group.groupId);
-                  seal.replyToSender(ctx, msg, s || '无');
+                  const current = ai.memory.getCurrentPersona();
+                  const name = ai.memory.currentPersona || '无';
+                  const count = Object.keys(ai.memory.personaMap).length;
+
+                  let replyMsg = `当前自设: ${name}\n`;
+                  if (count > 0) {
+                    replyMsg += `总计: ${count} 个自设\n`;
+                  }
+                  replyMsg += `内容:\n${current}`;
+
+                  seal.replyToSender(ctx, msg, replyMsg);
                   return ret;
                 }
                 case 'clr': {
@@ -513,7 +794,15 @@ function main() {
                   return ret;
                 }
                 default: {
-                  seal.replyToSender(ctx, msg, '参数缺失，【.ai memo g show】展示群聊记忆，【.ai memo g clr】清除群聊记忆');
+                  seal.replyToSender(ctx, msg,
+                    '群聊记忆指令:\n' +
+                    '【.ai memo g st】设置自设\n' +
+                    '【.ai memo g switch】切换自设\n' +
+                    '【.ai memo g lst】列出自设\n' +
+                    '【.ai memo g rename】重命名自设\n' +
+                    '【.ai memo g show】查看当前自设\n' +
+                    '【.ai memo g del】删除记忆/自设\n' +
+                    '【.ai memo g clr】清除记忆');
                   return ret;
                 }
               }
@@ -564,11 +853,16 @@ function main() {
             default: {
               seal.replyToSender(ctx, msg, `帮助:
 【.ai memo status (@xxx)】查看记忆状态，@为查看个人记忆状态
-【.ai memo [p/g] st <内容>】设置个人/群聊设定
-【.ai memo [p/g] st clr】清除个人/群聊设定
-【.ai memo [p/g] del <ID1> <ID2> --关键词1 --关键词2】删除个人/群聊记忆
-【.ai memo [p/g/s] show】展示个人/群聊/短期记忆
-【.ai memo [p/g/s] clr】清除个人/群聊/短期记忆
+【.ai memo [p/g] st <内容>】直接设置当前自设
+【.ai memo [p/g] st <名称> <内容>】创建/更新命名自设
+【.ai memo [p/g] st clr】清除所有自设
+【.ai memo [p/g] switch <名称>】切换自设
+【.ai memo [p/g] lst】列出所有自设
+【.ai memo [p/g] rename <旧名> <新名>】重命名自设
+【.ai memo [p/g] del <名称>...】删除自设
+【.ai memo [p/g] del <ID> --关键词】删除记忆
+【.ai memo [p/g/s] show】展示自设/记忆内容
+【.ai memo [p/g/s] clr】清除记忆
 【.ai memo s [on/off]】开启/关闭短期记忆
 【.ai memo sum】立即总结一次短期记忆`);
               return ret;
@@ -1143,6 +1437,542 @@ ${Object.keys(tool.info.function.parameters.properties).map(key => {
             }
           }
         }
+        case 'arc':
+        case 'archive': {
+          const pr = ai.privilege;
+          if (ctx.privilegeLevel < pr.limit) {
+            seal.replyToSender(ctx, msg, seal.formatTmpl(ctx, "核心:提示_无权限"));
+            return ret;
+          }
+
+          if (!ai.archiveManager) {
+            ai.archiveManager = new ArchiveManager(ai);
+          }
+
+          const val2 = cmdArgs.getArgN(2);
+          switch (val2) {
+            case 'start': {
+              const name = cmdArgs.getArgN(3);
+              const result = ai.archiveManager.startWorking(name || undefined);
+              seal.replyToSender(ctx, msg, result);
+              AIManager.saveAI(id);
+              return ret;
+            }
+            case 'stop': {
+              const result = ai.archiveManager.stopWorking();
+              seal.replyToSender(ctx, msg, result);
+              AIManager.saveAI(id);
+              return ret;
+            }
+            case 'save': {
+              const name = cmdArgs.getArgN(3);
+              const result = ai.archiveManager.saveWorking(name || undefined);
+              seal.replyToSender(ctx, msg, result);
+              AIManager.saveAI(id);
+              return ret;
+            }
+            case 'saveto': {
+              const name = cmdArgs.getArgN(3);
+              if (!name) {
+                seal.replyToSender(ctx, msg, '请指定存档名称，格式：.ai arc saveto <名称>');
+                return ret;
+              }
+              const result = ai.archiveManager.saveTo(name);
+              seal.replyToSender(ctx, msg, result);
+              AIManager.saveAI(id);
+              return ret;
+            }
+            case 'load': {
+              const name = cmdArgs.getArgN(3);
+              if (!name) {
+                seal.replyToSender(ctx, msg, '请指定存档名称，格式：.ai arc load <名称>');
+                return ret;
+              }
+              const result = ai.archiveManager.loadArchive(name);
+              seal.replyToSender(ctx, msg, result);
+              AIManager.saveAI(id);
+              return ret;
+            }
+            case 'list': {
+              const result = ai.archiveManager.listArchives();
+              seal.replyToSender(ctx, msg, result);
+              return ret;
+            }
+            case 'info': {
+              const name = cmdArgs.getArgN(3);
+              if (!name) {
+                seal.replyToSender(ctx, msg, '请指定存档名称，格式：.ai arc info <名称>');
+                return ret;
+              }
+              const result = ai.archiveManager.getArchiveInfo(name);
+              seal.replyToSender(ctx, msg, result);
+              return ret;
+            }
+            case 'rename': {
+              const oldName = cmdArgs.getArgN(3);
+              const newName = cmdArgs.getArgN(4);
+              if (!oldName || !newName) {
+                seal.replyToSender(ctx, msg, '请指定旧名称和新名称，格式：.ai arc rename <旧名> <新名>');
+                return ret;
+              }
+              const result = ai.archiveManager.renameArchive(oldName, newName);
+              seal.replyToSender(ctx, msg, result);
+              AIManager.saveAI(id);
+              return ret;
+            }
+            case 'delete':
+            case 'del': {
+              const name = cmdArgs.getArgN(3);
+              if (!name) {
+                seal.replyToSender(ctx, msg, '请指定存档名称，格式：.ai arc delete <名称>');
+                return ret;
+              }
+              const result = ai.archiveManager.deleteArchive(name);
+              seal.replyToSender(ctx, msg, result);
+              return ret;
+            }
+            case 'status': {
+              const result = ai.archiveManager.getStatus();
+              seal.replyToSender(ctx, msg, result);
+              return ret;
+            }
+            default: {
+              const helpText = `存档管理帮助：
+【.ai arc start [名称]】开启工作存档
+【.ai arc stop】停止记录
+【.ai arc save [名称]】保存工作存档
+【.ai arc saveto <名称>】保存当前上下文到指定存档
+【.ai arc load <名称>】加载存档
+【.ai arc list】列出所有存档
+【.ai arc info <名称>】查看存档信息
+【.ai arc rename <旧名> <新名>】重命名存档
+【.ai arc delete <名称>】删除存档
+【.ai arc status】查看工作存档状态`;
+              seal.replyToSender(ctx, msg, helpText);
+              return ret;
+            }
+          }
+        }
+        case 'undo': {
+          const { enableUndo } = ConfigManager.undo;
+
+          if (!enableUndo) {
+            seal.replyToSender(ctx, msg, '撤销功能未启用');
+            return ret;
+          }
+
+          const pr = ai.privilege;
+          // 私聊中所有人都可以使用，群聊中根据配置检查权限
+          const { groupRequirePrivilege } = ConfigManager.undo;
+          const needCheckPrivilege = !ctx.isPrivate && groupRequirePrivilege;
+
+          if (needCheckPrivilege && ctx.privilegeLevel < pr.limit) {
+            seal.replyToSender(ctx, msg, seal.formatTmpl(ctx, "核心:提示_无权限"));
+            return ret;
+          }
+
+          const val2 = cmdArgs.getArgN(2);
+
+          switch (val2) {
+            case 'info':
+            case 'list': {
+              const info = ai.context.getSnapshotInfo(uid, ctx.isPrivate);
+              seal.replyToSender(ctx, msg, info);
+              return ret;
+            }
+
+            case 'clear': {
+              // 清除快照需要权限
+              if (ctx.privilegeLevel < pr.limit) {
+                seal.replyToSender(ctx, msg, seal.formatTmpl(ctx, "核心:提示_无权限"));
+                return ret;
+              }
+              const count = ai.context.clearSnapshots();
+              seal.replyToSender(ctx, msg, `已清除 ${count} 个快照`);
+              AIManager.saveAI(id);
+              return ret;
+            }
+
+            case 'help': {
+              const helpText = `撤销功能帮助:
+【.ai undo】撤销最后一次AI回复并重新生成
+【.ai undo info】查看可用快照列表
+【.ai undo clear】清除所有快照(需要权限)
+
+说明：
+- 每次AI回复前会自动创建快照
+- 快照记录了用户的原始输入
+- 撤销会删除快照点之后的所有上下文
+- 私聊中可以自由撤销自己的对话
+- 群聊中${groupRequirePrivilege ? '需要权限或只能撤销自己创建的快照' : '所有人都可以撤销'}`;
+              seal.replyToSender(ctx, msg, helpText);
+              return ret;
+            }
+
+            case '':
+            default: {
+              // 执行撤销操作
+              if (!ai.context.hasSnapshots()) {
+                seal.replyToSender(ctx, msg, '没有可用的快照，无法撤销\n提示：快照会在AI回复后自动创建');
+                return ret;
+              }
+
+              const hasPrivilege = ctx.privilegeLevel >= pr.limit;
+              const rollbackResult = ai.context.rollbackToLastSnapshot(uid, ctx.isPrivate, hasPrivilege);
+
+              if (!rollbackResult.success) {
+                seal.replyToSender(ctx, msg, `撤销失败：${rollbackResult.error || '未知错误'}`);
+                return ret;
+              }
+
+              const briefUserMessage = rollbackResult.userMessage.length > 30
+                ? rollbackResult.userMessage.slice(0, 30) + '...'
+                : rollbackResult.userMessage;
+
+              const infoText = `已撤销 ${rollbackResult.removedCount} 条上下文记录
+快照时间: ${rollbackResult.snapshotTime}
+原始输入: "${briefUserMessage}"
+正在重新生成...`;
+
+              seal.replyToSender(ctx, msg, infoText);
+
+              // 保存AI状态
+              AIManager.saveAI(id);
+
+              // 重新生成回复
+              ai.chat(ctx, msg, '撤销重新生成', {
+                userMessage: rollbackResult.userMessage,
+                originalSource: rollbackResult.source
+              }).catch(e => {
+                logger.error(`重新生成失败: ${e.message}`);
+                seal.replyToSender(ctx, msg, `重新生成失败: ${e.message}`);
+              });
+
+              return ret;
+            }
+          }
+        }
+        case 'soup': {
+          const pr = ai.privilege;
+          if (ctx.privilegeLevel < pr.limit) {
+            seal.replyToSender(ctx, msg, seal.formatTmpl(ctx, "核心:提示_无权限"));
+            return ret;
+          }
+
+          const val2 = cmdArgs.getArgN(2);
+          const { soups } = ConfigManager.soup;
+          
+          switch (val2) {
+            case 'start': {
+              if (ai.soupGame.active) {
+                seal.replyToSender(ctx, msg, '已有游戏正在进行中，请先使用【.ai soup answer】结束当前游戏');
+                return ret;
+              }
+
+              const soupName = cmdArgs.getArgN(3);
+              let soup = null;
+
+              if (soupName === '红汤') {
+                soup = SoupConfig.getSoup(soups, '红汤');
+              } else if (soupName === '清汤') {
+                soup = SoupConfig.getSoup(soups, '清汤');
+              } else {
+                soup = SoupConfig.getSoup(soups, soupName);
+              }
+              
+              if (!soup) {
+                const hint = soupName ? 
+                    `未找到题目"${soupName}"，使用【.ai soup list】查看所有题目` :
+                    '题库为空，请在配置文件中添加题目';
+                seal.replyToSender(ctx, msg, hint);
+                return ret;
+              }
+
+              // 启动游戏
+              ai.soupGame.active = true;
+              ai.soupGame.currentSoup = soup;
+              ai.soupGame.questionCount = 0;
+              ai.soupGame.hintsUsed = 0;
+
+              const reply = `海龟汤游戏开始
+
+**题目**：${soup.name}
+**类型**：${soup.type} | ${soup.style}
+
+**汤面**：
+${soup.surface}
+
+请开始提问吧
+使用【.ai soup hint】可获取提示
+使用【.ai soup answer】可查看答案并结束游戏`;
+
+              seal.replyToSender(ctx, msg, reply);
+              AIManager.saveAI(id);
+              return ret;
+            }
+
+            case 'hint': {
+              if (!ai.soupGame.active) {
+                seal.replyToSender(ctx, msg, '当前没有进行中的游戏');
+                return ret;
+              }
+
+              const soup = ai.soupGame.currentSoup!;
+              if (ai.soupGame.hintsUsed >= soup.hints.length) {
+                seal.replyToSender(ctx, msg, '已经没有更多提示了');
+                return ret;
+              }
+
+              const hint = soup.hints[ai.soupGame.hintsUsed];
+              ai.soupGame.hintsUsed++;
+              
+              seal.replyToSender(ctx, msg, `提示 ${ai.soupGame.hintsUsed}/${soup.hints.length}：
+${hint}`);
+              AIManager.saveAI(id);
+              return ret;
+            }
+
+            case 'answer': {
+              if (!ai.soupGame.active) {
+                seal.replyToSender(ctx, msg, '当前没有进行中的游戏');
+                return ret;
+              }
+
+              const soup = ai.soupGame.currentSoup!;
+              ai.soupGame.active = false;
+
+              seal.replyToSender(ctx, msg, `游戏结束
+
+**汤底**：
+${soup.truth}
+
+提问次数：${ai.soupGame.questionCount}
+使用提示：${ai.soupGame.hintsUsed}/${soup.hints.length}`);
+              
+              AIManager.saveAI(id);
+              return ret;
+            }
+
+            case 'stop': {
+              if (!ai.soupGame.active) {
+                seal.replyToSender(ctx, msg, '当前没有进行中的游戏');
+                return ret;
+              }
+
+              ai.soupGame.active = false;
+              seal.replyToSender(ctx, msg, '游戏已停止');
+              AIManager.saveAI(id);
+              return ret;
+            }
+
+            case 'status': {
+              if (!ai.soupGame.active) {
+                seal.replyToSender(ctx, msg, '当前没有进行中的游戏');
+                return ret;
+              }
+
+              const soup = ai.soupGame.currentSoup!;
+              seal.replyToSender(ctx, msg, `游戏状态
+题目：${soup.name}
+类型：${soup.type} | ${soup.style}
+提问次数：${ai.soupGame.questionCount}
+使用提示：${ai.soupGame.hintsUsed}/${soup.hints.length}`);
+              return ret;
+            }
+
+            case 'list': {
+              const type = cmdArgs.getArgN(3);
+              let list = '';
+              
+              if (type === '红汤' || type === '清汤') {
+                list = SoupConfig.listSoups(soups, type);
+              } else {
+                list = SoupConfig.listSoups(soups);
+              }
+
+              seal.replyToSender(ctx, msg, `题目列表：
+${list}
+
+使用【.ai soup start <题目名称>】开始指定游戏
+使用【.ai soup start 红汤/清汤】随机开始对应类型的游戏
+使用【.ai soup start】随机开始游戏`);
+              return ret;
+            }
+
+            case '':
+            case 'help':
+            default: {
+              seal.replyToSender(ctx, msg, `海龟汤游戏帮助:
+【.ai soup start [题目名称/红汤/清汤]】开始游戏
+【.ai soup hint】获取提示
+【.ai soup answer】查看答案并结束游戏
+【.ai soup stop】停止当前游戏
+【.ai soup status】查看当前游戏状态
+【.ai soup list [红汤/清汤]】查看题目列表
+
+游戏中直接向AI提问即可，AI会回答"是"、"否"或"无关"`);
+              return ret;
+            }
+          }
+        }
+        case 'timer': {
+          const pr = ai.privilege;
+          if (ctx.privilegeLevel < pr.limit) {
+            seal.replyToSender(ctx, msg, seal.formatTmpl(ctx, "核心:提示_无权限"));
+            return ret;
+          }
+
+          const subCmd = cmdArgs.getArgN(2);
+          switch (subCmd) {
+            case 'set': {
+              // .ai timer set <名称> <时间> [内容]
+              const name = cmdArgs.getArgN(3);
+              const timeStr = cmdArgs.getArgN(4);
+              const content = cmdArgs.getRestArgsFrom(5) || '定时提醒';
+
+              if (!name || !timeStr) {
+                seal.replyToSender(ctx, msg, `用法: .ai timer set <名称> <时间> [内容]
+时间格式:
+- 相对时间: 30m, 2h, 1d
+- 绝对时间: 14:30, 2024-10-09 14:30
+- 重复周期: daily@14:30, weekly@1@09:00`);
+                return ret;
+              }
+
+              const parsed = TimeParser.parse(timeStr);
+              if (!parsed) {
+                seal.replyToSender(ctx, msg, '时间格式错误');
+                return ret;
+              }
+
+              const result = TimerManager.addNamedTimer(
+                ctx, msg, ai, name, parsed.timestamp, content, parsed.repeatType
+              );
+              seal.replyToSender(ctx, msg, result.message);
+              return ret;
+            }
+
+            case 'list':
+            case 'lst': {
+              // .ai timer list [过滤条件]
+              const filter = cmdArgs.getArgN(3);
+              const timers = TimerManager.listTimers(ai.id, filter);
+
+              if (timers.length === 0) {
+                seal.replyToSender(ctx, msg, filter ? `没有找到包含"${filter}"的定时器` : '没有找到定时器');
+                return ret;
+              }
+
+              const list = timers.map(t => TimerManager.formatTimerInfo(t, true)).join('\n');
+              seal.replyToSender(ctx, msg, `定时器列表(${timers.length}个):\n${list}`);
+              return ret;
+            }
+
+            case 'info': {
+              // .ai timer info <名称>
+              const name = cmdArgs.getArgN(3);
+              if (!name) {
+                seal.replyToSender(ctx, msg, '用法: .ai timer info <名称>');
+                return ret;
+              }
+
+              const timer = TimerManager.getTimer(ai.id, name);
+              if (!timer) {
+                seal.replyToSender(ctx, msg, '定时器不存在');
+                return ret;
+              }
+
+              seal.replyToSender(ctx, msg, TimerManager.formatTimerInfo(timer));
+              return ret;
+            }
+
+            case 'del':
+            case 'rm': {
+              // .ai timer del <名称>
+              const name = cmdArgs.getArgN(3);
+              if (!name) {
+                seal.replyToSender(ctx, msg, '用法: .ai timer del <名称>');
+                return ret;
+              }
+
+              const success = TimerManager.deleteTimer(ai.id, name);
+              seal.replyToSender(ctx, msg, success ? '定时器已删除' : '定时器不存在');
+              return ret;
+            }
+
+            case 'enable':
+            case 'on': {
+              // .ai timer enable <名称>
+              const name = cmdArgs.getArgN(3);
+              if (!name) {
+                seal.replyToSender(ctx, msg, '用法: .ai timer enable <名称>');
+                return ret;
+              }
+
+              const success = TimerManager.toggleTimer(ai.id, name, true);
+              seal.replyToSender(ctx, msg, success ? '定时器已启用' : '定时器不存在');
+              return ret;
+            }
+
+            case 'disable':
+            case 'off': {
+              // .ai timer disable <名称>
+              const name = cmdArgs.getArgN(3);
+              if (!name) {
+                seal.replyToSender(ctx, msg, '用法: .ai timer disable <名称>');
+                return ret;
+              }
+
+              const success = TimerManager.toggleTimer(ai.id, name, false);
+              seal.replyToSender(ctx, msg, success ? '定时器已禁用' : '定时器不存在');
+              return ret;
+            }
+
+            case 'edit': {
+              // .ai timer edit <名称> <属性> <新值>
+              const name = cmdArgs.getArgN(3);
+              const property = cmdArgs.getArgN(4);
+              const value = cmdArgs.getRestArgsFrom(5);
+
+              if (!name || !property || !value) {
+                seal.replyToSender(ctx, msg, `用法: .ai timer edit <名称> <属性> <新值>
+属性可选: time, content, trigger, repeat`);
+                return ret;
+              }
+
+              if (!['time', 'content', 'repeat'].includes(property)) {
+                seal.replyToSender(ctx, msg, '属性错误，可选: time, content, repeat');
+                return ret;
+              }
+
+              const result = TimerManager.editTimer(ai.id, name, property as any, value);
+              seal.replyToSender(ctx, msg, result.message);
+              return ret;
+            }
+
+            default: {
+              seal.replyToSender(ctx, msg, `定时器帮助:
+【.ai timer set <名称> <时间> [内容]】创建定时器
+【.ai timer list [过滤]】查看定时器列表
+【.ai timer info <名称>】查看定时器详情
+【.ai timer del <名称>】删除定时器
+【.ai timer enable <名称>】启用定时器
+【.ai timer disable <名称>】禁用定时器
+【.ai timer edit <名称> <属性> <新值>】编辑定时器
+
+时间格式示例:
+- 相对: 30m(30分钟后), 2h(2小时后), 1d(1天后)
+- 绝对: 14:30(今天14:30), 2024-10-09 14:30
+- 重复: daily@14:30(每天14:30), weekly@1@09:00(每周一9点)
+
+编辑属性说明:
+- time: 修改触发时间
+- content: 修改提示内容
+- repeat: 修改重复类型(once/daily/weekly/monthly)`);
+              return ret;
+            }
+          }
+        }
         case 'shut': {
           const pr = ai.privilege;
           if (ctx.privilegeLevel < pr.limit) {
@@ -1447,7 +2277,7 @@ ${Object.keys(tool.info.function.parameters.properties).map(key => {
             }
 
             return ai.handleReceipt(ctx, msg, ai, message, CQTypes)
-              .then(() => ai.context.addSystemUserMessage('触发原因提示', condition.reason, []))
+              .then(() => ai.context.addSystemUserMessage('触发原因提示', condition.reason, [], ai))
               .then(() => triggerConditionMap[id].splice(i, 1))
               .then(() => ai.chat(ctx, msg, 'AI设定触发条件'));
           }
@@ -1458,6 +2288,12 @@ ${Object.keys(tool.info.function.parameters.properties).map(key => {
         if (pr.standby || globalStandby) {
           ai.handleReceipt(ctx, msg, ai, message, CQTypes)
             .then((): void | Promise<void> => {
+              // 如果在海龟汤游戏中，计数提问次数
+              if (ai.soupGame.active) {
+                ai.soupGame.questionCount++;
+                AIManager.saveAI(id);
+              }
+
               if (pr.counter > -1) {
                 ai.context.counter += 1;
                 if (ai.context.counter >= pr.counter) {

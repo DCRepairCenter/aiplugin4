@@ -1,0 +1,13 @@
+{
+    "model": "claude-sonnet-4-5-all-time",
+    "messages": [
+      {
+        "role": "system",
+        "content": "你是一个有帮助的助手。"
+      },
+      {
+        "role": "user",
+        "content": "你好！"
+      }
+    ]
+}

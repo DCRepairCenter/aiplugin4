@@ -1,3 +1,4 @@
+import { ArchiveConfig } from "./config_archive";
 import { BackendConfig } from "./config_backend";
 import { ImageConfig } from "./config_image";
 import { LogConfig } from "./config_log";
@@ -6,7 +7,10 @@ import { MessageConfig } from "./config_message";
 import { ReceivedConfig } from "./config_received";
 import { ReplyConfig } from "./config_reply";
 import { RequestConfig } from "./config_request";
+import { SoupConfig } from "./config_soup";
+import { TimerConfig } from "./config_timer";
 import { ToolConfig } from "./config_tool";
+import { UndoConfig } from "./config_undo";
 
 export const VERSION = "4.10.1";
 export const AUTHOR = "baiyu&错误";
@@ -32,6 +36,10 @@ export class ConfigManager {
         ImageConfig.register();
         BackendConfig.register();
         MemoryConfig.register();
+        ArchiveConfig.register();
+        UndoConfig.register();
+        TimerConfig.register();
+        SoupConfig.register();
     }
 
     static getCache<T>(key: string, getFunc: () => T): T {
@@ -58,6 +66,10 @@ export class ConfigManager {
     static get image() { return this.getCache('image', ImageConfig.get) }
     static get backend() { return this.getCache('backend', BackendConfig.get) }
     static get memory() { return this.getCache('memory', MemoryConfig.get) }
+    static get archive() { return this.getCache('archive', ArchiveConfig.get) }
+    static get undo() { return this.getCache('undo', UndoConfig.get) }
+    static get timer() { return this.getCache('timer', TimerConfig.get) }
+    static get soup() { return this.getCache('soup', SoupConfig.get) }
 
     static getExt(name: string): seal.ExtInfo {
         if (name == 'aiplugin4' && ConfigManager.ext) {
