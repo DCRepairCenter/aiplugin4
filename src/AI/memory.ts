@@ -28,13 +28,15 @@ export interface MemoryInfo {
 }
 
 export class Memory {
-    persona: string;
+    currentPersona: string;  // 当前激活的自设名称
+    personaMap: { [name: string]: string };  // 自设映射表: 名称 -> 内容
     memoryMap: { [key: string]: MemoryInfo };
     useShortMemory: boolean;
     shortMemoryList: string[];
 
     constructor() {
-        this.persona = '无';
+        this.currentPersona = '无';
+        this.personaMap = {};
         this.memoryMap = {};
         this.useShortMemory = false;
         this.shortMemoryList = [];
@@ -42,15 +44,112 @@ export class Memory {
 
     static reviver(value: any): Memory {
         const memory = new Memory();
-        const validKeys = ['persona', 'memoryMap', 'useShortMemory', 'shortMemory'];
+        const validKeys = ['persona', 'currentPersona', 'personaMap', 'memoryMap', 'useShortMemory', 'shortMemory'];
+
+        // 兼容旧数据结构
+        if (value.persona !== undefined && !value.currentPersona) {
+            if (value.persona === '无' || !value.persona) {
+                memory.currentPersona = '无';
+                memory.personaMap = {};
+            } else {
+                memory.currentPersona = '默认';
+                memory.personaMap = { '默认': value.persona };
+            }
+        } else {
+            memory.currentPersona = value.currentPersona || '无';
+            memory.personaMap = value.personaMap || {};
+        }
 
         for (const k in value) {
-            if (validKeys.includes(k)) {
+            if (validKeys.includes(k) && k !== 'persona' && k !== 'currentPersona' && k !== 'personaMap') {
                 memory[k] = value[k];
             }
         }
 
         return memory;
+    }
+
+    // 获取当前自设内容
+    getCurrentPersona(): string {
+        if (!this.currentPersona || this.currentPersona === '无') {
+            return '无';
+        }
+        return this.personaMap[this.currentPersona] || '无';
+    }
+
+    // 设置当前自设(直接替换模式)
+    setCurrentPersona(content: string): void {
+        if (!this.currentPersona || this.currentPersona === '无') {
+            this.currentPersona = '默认';
+        }
+        this.personaMap[this.currentPersona] = content;
+    }
+
+    // 创建或更新命名自设并切换
+    setNamedPersona(name: string, content: string): void {
+        this.personaMap[name] = content;
+        this.currentPersona = name;
+    }
+
+    // 切换自设
+    switchPersona(name: string): boolean {
+        if (this.personaMap.hasOwnProperty(name)) {
+            this.currentPersona = name;
+            return true;
+        }
+        return false;
+    }
+
+    // 删除自设
+    deletePersona(names: string[]): { success: string[], failed: string[] } {
+        const success: string[] = [];
+        const failed: string[] = [];
+
+        names.forEach(name => {
+            if (name === this.currentPersona) {
+                failed.push(name + '(当前使用中)');
+            } else if (this.personaMap.hasOwnProperty(name)) {
+                delete this.personaMap[name];
+                success.push(name);
+            } else {
+                failed.push(name + '(不存在)');
+            }
+        });
+
+        return { success, failed };
+    }
+
+    // 重命名自设
+    renamePersona(oldName: string, newName: string): boolean {
+        if (!this.personaMap.hasOwnProperty(oldName)) {
+            return false;
+        }
+        if (this.personaMap.hasOwnProperty(newName)) {
+            return false; // 新名称已存在
+        }
+
+        this.personaMap[newName] = this.personaMap[oldName];
+        delete this.personaMap[oldName];
+
+        if (this.currentPersona === oldName) {
+            this.currentPersona = newName;
+        }
+
+        return true;
+    }
+
+    // 列出所有自设
+    listPersonas(): { current: string, list: string[] } {
+        return {
+            current: this.currentPersona || '无',
+            list: Object.keys(this.personaMap)
+        };
+    }
+
+    // 清除所有自设
+    clearAllPersonas(): void {
+        this.currentPersona = '无';
+        this.personaMap = {};
     }
 
     addMemory(ctx: seal.MsgContext, kws: string[], content: string) {
@@ -290,7 +389,7 @@ export class Memory {
         const { memoryShowNumber, memoryShowTemplate, memorySingleShowTemplate } = ConfigManager.memory;
         const memoryList = Object.values(this.memoryMap);
 
-        if (memoryList.length === 0 && this.persona === '无') {
+        if (memoryList.length === 0 && this.getCurrentPersona() === '无') {
             return '';
         }
 
@@ -334,7 +433,7 @@ export class Memory {
             "用户号码": uid.replace(/^.+:/, ''),
             "群聊名称": gn,
             "群聊号码": gid.replace(/^.+:/, ''),
-            "设定": this.persona,
+            "设定": this.getCurrentPersona(),
             "记忆列表": memoryContent
         }
 

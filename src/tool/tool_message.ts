@@ -100,7 +100,7 @@ export function registerSendMsg() {
 
         ai.resetState();
 
-        await ai.context.addSystemUserMessage("来自其他对话的消息发送提示", `${source}: 原因: ${reason || '无'}`, originalImages);
+        await ai.context.addSystemUserMessage("来自其他对话的消息发送提示", `${source}: 原因: ${reason || '无'}`, originalImages, ai);
 
         const { contextArray, replyArray, images } = await handleReply(ctx, msg, ai, content);
 

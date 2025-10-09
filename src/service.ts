@@ -15,70 +15,98 @@ export async function sendChatRequest(ctx: seal.MsgContext, msg: seal.Message, a
     const { isTool, usePromptEngineering } = ConfigManager.tool;
     const tools = ai.tool.getToolsInfo(msg.messageType);
 
-    try {
-        const bodyObject = parseBody(bodyTemplate, messages, tools, tool_choice);
-        const time = Date.now();
+    const maxRetries = 3;
 
-        const data = await fetchData(url, apiKey, bodyObject);
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            const bodyObject = parseBody(bodyTemplate, messages, tools, tool_choice);
+            const time = Date.now();
 
-        if (data.choices && data.choices.length > 0) {
-            AIManager.updateUsage(data.model, data.usage);
-
-            const message = data.choices[0].message;
-            const finish_reason = data.choices[0].finish_reason;
-
-            if (message.hasOwnProperty('reasoning_content')) {
-                logger.info(`思维链内容:`, message.reasoning_content);
+            if (attempt > 1) {
+                logger.info(`第 ${attempt} 次重试请求...`);
             }
 
-            const reply = message.content || '';
+            const data = await fetchData(url, apiKey, bodyObject);
 
-            logger.info(`响应内容:`, reply, '\nlatency:', Date.now() - time, 'ms', '\nfinish_reason:', finish_reason);
+            if (data.choices && data.choices.length > 0) {
+                AIManager.updateUsage(data.model, data.usage);
 
-            if (isTool) {
-                if (usePromptEngineering) {
-                    const match = reply.match(/<function(?:_call)?>([\s\S]*)<\/function(?:_call)?>/);
-                    if (match) {
-                        await ai.context.addMessage(ctx, msg, ai, match[0], [], "assistant", '');
+                const message = data.choices[0].message;
+                const finish_reason = data.choices[0].finish_reason;
 
-                        try {
-                            await ToolManager.handlePromptToolCall(ctx, msg, ai, match[1]);
-                        } catch (e) {
-                            logger.error(`在handlePromptToolCall中出错：`, e.message);
-                            return '';
+                if (message.hasOwnProperty('reasoning_content')) {
+                    logger.info(`思维链内容:`, message.reasoning_content);
+                }
+
+                const reply = message.content || '';
+
+                logger.info(`响应内容:`, reply, '\nlatency:', Date.now() - time, 'ms', '\nfinish_reason:', finish_reason);
+
+                if (isTool) {
+                    if (usePromptEngineering) {
+                        const match = reply.match(/<function(?:_call)?>([\s\S]*)<\/function(?:_call)?>/);
+                        if (match) {
+                            await ai.context.addMessage(ctx, msg, ai, match[0], [], "assistant", '');
+
+                            try {
+                                await ToolManager.handlePromptToolCall(ctx, msg, ai, match[1]);
+                            } catch (e) {
+                                logger.error(`在handlePromptToolCall中出错：`, e.message);
+                                return '';
+                            }
+
+                            const messages = handleMessages(ctx, ai);
+                            return await sendChatRequest(ctx, msg, ai, messages, tool_choice);
                         }
+                    } else {
+                        if (message.hasOwnProperty('tool_calls') && Array.isArray(message.tool_calls) && message.tool_calls.length > 0) {
+                            logger.info(`触发工具调用`);
 
-                        const messages = handleMessages(ctx, ai);
-                        return await sendChatRequest(ctx, msg, ai, messages, tool_choice);
-                    }
-                } else {
-                    if (message.hasOwnProperty('tool_calls') && Array.isArray(message.tool_calls) && message.tool_calls.length > 0) {
-                        logger.info(`触发工具调用`);
+                            ai.context.addToolCallsMessage(message.tool_calls, ai);
 
-                        ai.context.addToolCallsMessage(message.tool_calls);
+                            let tool_choice = 'auto';
+                            try {
+                                tool_choice = await ToolManager.handleToolCalls(ctx, msg, ai, message.tool_calls);
+                            } catch (e) {
+                                logger.error(`在handleToolCalls中出错：`, e.message);
+                                return '';
+                            }
 
-                        let tool_choice = 'auto';
-                        try {
-                            tool_choice = await ToolManager.handleToolCalls(ctx, msg, ai, message.tool_calls);
-                        } catch (e) {
-                            logger.error(`在handleToolCalls中出错：`, e.message);
-                            return '';
+                            const messages = handleMessages(ctx, ai);
+                            return await sendChatRequest(ctx, msg, ai, messages, tool_choice);
                         }
-
-                        const messages = handleMessages(ctx, ai);
-                        return await sendChatRequest(ctx, msg, ai, messages, tool_choice);
                     }
                 }
-            }
 
-            return reply;
-        } else {
-            throw new Error(`服务器响应中没有choices或choices为空\n响应体:${JSON.stringify(data, null, 2)}`);
+                return reply;
+            } else {
+                throw new Error(`服务器响应中没有choices或choices为空\n响应体:${JSON.stringify(data, null, 2)}`);
+            }
+        } catch (error) {
+            logger.error(`在sendChatRequest中出错（第 ${attempt}/${maxRetries} 次尝试）：`, error);
+            
+            // 检查是否应该重试
+            const shouldRetry = attempt < maxRetries && (
+                error.message?.includes('状态码:') || 
+                error.message?.includes('响应体为空') ||
+                error.message?.includes('EOF')
+            );
+            
+            if (!shouldRetry) {
+                // 如果不应该重试，直接返回
+                return '';
+            }
+            
+            // 等待一段时间后重试（指数退避）
+            const delay = Math.min(1000 * Math.pow(2, attempt - 1), 5000);
+            logger.info(`等待 ${delay}ms 后重试...`);
+            await new Promise(resolve => setTimeout(resolve, delay));
         }
-    } catch (error) {
-        logger.error("在sendChatRequest中出错：", error);
-        return '';
     }
+
+    // 所有重试都失败
+    logger.error(`请求失败，已达到最大重试次数 ${maxRetries}`);
+    return '';
 }
 
 export async function sendITTRequest(messages: {

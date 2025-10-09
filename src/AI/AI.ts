@@ -1,5 +1,6 @@
 import { Image, ImageManager } from "./image";
 import { ConfigManager } from "../config/config";
+import { SoupData } from "../config/config_soup";
 import { replyToSender, transformMsgId } from "../utils/utils";
 import { endStream, pollStream, sendChatRequest, startStream } from "../service";
 import { Context } from "./context";
@@ -18,6 +19,13 @@ export interface Privilege {
     standby: boolean
 }
 
+export interface SoupGameState {
+    active: boolean;
+    currentSoup: SoupData | null;
+    questionCount: number;
+    hintsUsed: number;
+}
+
 export class AI {
     id: string;
     version: string;
@@ -26,6 +34,8 @@ export class AI {
     memory: Memory;
     imageManager: ImageManager;
     privilege: Privilege;
+    archiveManager: any; // ArchiveManager类型，避免循环依赖
+    soupGame: SoupGameState;
 
     // 下面是临时变量，用于处理消息
     stream: { // 用于流式输出相关
@@ -53,6 +63,13 @@ export class AI {
             prob: -1,
             standby: false
         };
+        this.archiveManager = null;
+        this.soupGame = {
+            active: false,
+            currentSoup: null,
+            questionCount: 0,
+            hintsUsed: 0
+        };
         this.stream = {
             id: '',
             reply: '',
@@ -66,7 +83,7 @@ export class AI {
 
     static reviver(value: any, id: string): AI {
         const ai = new AI(id);
-        const validKeys = ['version', 'context', 'tool', 'memory', 'imageManager', 'privilege'];
+        const validKeys = ['version', 'context', 'tool', 'memory', 'imageManager', 'privilege', 'archiveManager', 'soupGame'];
 
         for (const k of validKeys) {
             if (value.hasOwnProperty(k)) {
@@ -75,6 +92,22 @@ export class AI {
         }
 
         return ai;
+    }
+
+    toJSON() {
+        // 排除 archiveManager 和临时变量，避免循环引用
+        return {
+            id: this.id,
+            version: this.version,
+            context: this.context,
+            tool: this.tool,
+            memory: this.memory,
+            imageManager: this.imageManager,
+            privilege: this.privilege,
+            soupGame: this.soupGame
+            // archiveManager 不需要持久化，每次加载时会重新初始化
+            // stream 和 bucket 是临时变量，不需要持久化
+        };
     }
 
     resetState() {
@@ -100,8 +133,26 @@ export class AI {
         await ai.context.addMessage(ctx, msg, ai, message, images, 'user', transformMsgId(msg.rawId));
     }
 
-    async chat(ctx: seal.MsgContext, msg: seal.Message, reason: string = ''): Promise<void> {
-        logger.info('触发回复:', reason || '未知原因');
+    async chat(ctx: seal.MsgContext, msg: seal.Message, reason: string = '', regenerateData?: {
+        userMessage: string;
+        originalSource: string;
+    }): Promise<void> {
+        const actualReason = regenerateData ? `重新生成(原:${regenerateData.originalSource})` : reason;
+        logger.info('触发回复:', actualReason || '未知原因');
+
+        // 如果不是重新生成，创建快照
+        if (!regenerateData) {
+            const { enableUndo } = ConfigManager.undo;
+            if (enableUndo) {
+                // 提取用户消息
+                let userMessage = msg.message;
+                // 移除@机器人的部分
+                const atPattern = new RegExp(`\\[CQ:at,qq=${ctx.endPoint.userId.replace(/.*:/, '')}\\]`, 'g');
+                userMessage = userMessage.replace(atPattern, '').trim();
+                
+                this.context.createSnapshot(userMessage, reason, ctx.player.userId);
+            }
+        }
 
         const { bucketLimit, fillInterval } = ConfigManager.received;
         // 补充并检查触发次数
@@ -368,6 +419,7 @@ export class AIManager {
                     if (key === "imageManager") {
                         return ImageManager.reviver(value);
                     }
+                    // archiveManager 将在后续延迟初始化
 
                     return value;
                 });
