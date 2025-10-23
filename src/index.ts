@@ -12,6 +12,7 @@ import { checkUpdate } from "./utils/utils_update";
 import { get_chart_url } from "./service";
 import { TimerManager, TimeParser } from "./timer";
 import { parsePersonaCommand, isValidPersonaName, detectDeleteIntent } from "./utils/utils_persona";
+import { PrivilegeManager } from "./privilege";
 
 function main() {
   ConfigManager.registerConfig();
@@ -19,12 +20,14 @@ function main() {
   AIManager.getUsageMap();
   ToolManager.registerTool();
   TimerManager.init();
+  PrivilegeManager.reviveCmdPriv();
 
   const ext = ConfigManager.ext;
 
   const cmdAI = seal.ext.newCmdItemInfo();
   cmdAI.name = 'ai'; // 指令名字，可用中文
   cmdAI.help = `帮助:
+【.ai priv】权限管理系统
 【.ai st】修改权限(仅骰主可用)
 【.ai ck】检查权限(仅骰主可用)
 【.ai prompt】检查当前prompt(仅骰主可用)
@@ -55,7 +58,156 @@ function main() {
       const ret = seal.ext.newCmdExecuteResult(true);
       const ai = AIManager.getAI(id);
 
+      // Check privilege using new system
+      if (!PrivilegeManager.checkPriv(ctx, cmdArgs, ai)) {
+        seal.replyToSender(ctx, msg, "权限不足或指令不存在");
+        return ret;
+      }
+
       switch (val) {
+        case 'priv': {
+          const val2 = cmdArgs.getArgN(2);
+          switch (val2) {
+            case 's':
+            case 'session': {
+              const val3 = cmdArgs.getArgN(3);
+              switch (val3) {
+                case 'st': {
+                  const val4 = cmdArgs.getArgN(4);
+                  if (!val4 || val4 == 'help') {
+                    seal.replyToSender(ctx, msg, `帮助:
+【.ai priv s st <ID> <会话权限>】修改会话权限
+
+<ID>:
+【QQ:1234567890】 私聊窗口
+【QQ-Group:1234】 群聊窗口
+【now】当前窗口
+
+<会话权限>:任意数字，越大权限越高`);
+                    return ret;
+                  }
+
+                  const val5 = cmdArgs.getArgN(5);
+                  const limit = parseInt(val5);
+                  if (isNaN(limit)) {
+                    seal.replyToSender(ctx, msg, '权限值必须为数字');
+                    return ret;
+                  }
+
+                  const id2 = val4 === 'now' ? id : val4;
+                  const ai2 = AIManager.getAI(id2);
+
+                  ai2.privilege.limit = limit;
+
+                  seal.replyToSender(ctx, msg, '权限修改完成');
+                  AIManager.saveAI(id2);
+                  return ret;
+                }
+                case 'ck': {
+                  const val4 = cmdArgs.getArgN(4);
+                  if (!val4 || val4 == 'help') {
+                    seal.replyToSender(ctx, msg, `帮助:
+【.ai priv s ck <ID>】检查会话权限
+
+<ID>:
+【QQ:1234567890】 私聊窗口
+【QQ-Group:1234】 群聊窗口
+【now】当前窗口`);
+                    return ret;
+                  }
+
+                  const id2 = val4 === 'now' ? id : val4;
+                  const ai2 = AIManager.getAI(id2);
+
+                  const pr = ai2.privilege;
+
+                  const counter = pr.counter > -1 ? `${pr.counter}条` : '关闭';
+                  const timer = pr.timer > -1 ? `${pr.timer}秒` : '关闭';
+                  const prob = pr.prob > -1 ? `${pr.prob}%` : '关闭';
+                  const standby = pr.standby ? '开启' : '关闭';
+                  const s = `${id2}\n权限限制:${pr.limit}\n计数器模式(c):${counter}\n计时器模式(t):${timer}\n概率模式(p):${prob}\n待机模式:${standby}`;
+                  seal.replyToSender(ctx, msg, s);
+                  return ret;
+                }
+                default: {
+                  seal.replyToSender(ctx, msg, `帮助:
+【.ai priv s st <ID> <会话权限>】修改会话权限
+【.ai priv s ck <ID>】检查会话权限`);
+                  return ret;
+                }
+              }
+            }
+            case 'st': {
+              const val3 = cmdArgs.getArgN(3);
+              if (!val3 || val3 == 'help') {
+                seal.replyToSender(ctx, msg, `帮助:
+【.ai priv st <指令> <权限限制>】修改指令权限
+
+<指令>:指令名称和参数，多个指令用-连接，如ai-sb
+<权限限制>:数字0-数字1-数字2，如0-0-0，含义如下:
+0: 会话所需权限, 1: 会话检查通过后用户所需权限, 2: 强行触发指令用户所需权限`);
+                return ret;
+              }
+              const cmdChain = val3.split('-');
+              if (cmdChain?.[1] === 'priv') {
+                seal.replyToSender(ctx, msg, `你不能修改priv指令的权限`);
+                return ret;
+              }
+              const cpi = PrivilegeManager.getCmdPriv(cmdChain);
+              if (!cpi) {
+                seal.replyToSender(ctx, msg, `指令${val3}不存在`);
+                return ret;
+              }
+              const val4 = cmdArgs.getArgN(4);
+              const priv = val4.split('-').map(p => parseInt(p));
+              if (priv.length !== 3) {
+                seal.replyToSender(ctx, msg, '权限值必须为3个数字');
+                return ret;
+              }
+              for (const p of priv) {
+                if (isNaN(p)) {
+                  seal.replyToSender(ctx, msg, '权限值必须为数字');
+                  return ret;
+                }
+              }
+              cpi.priv = priv as [number, number, number];
+              PrivilegeManager.saveCmdPriv();
+              seal.replyToSender(ctx, msg, '权限修改完成');
+              return ret;
+            }
+            case 'show': {
+              const val3 = cmdArgs.getArgN(3);
+              if (!val3 || val3 == 'help') {
+                seal.replyToSender(ctx, msg, `帮助:
+【.ai priv show <指令>】检查指令权限
+
+<指令>:指令名称和参数，多个指令用-连接，如ai-sb`);
+                return ret;
+              }
+              const cmdChain = val3.split('-');
+              const cpi = PrivilegeManager.getCmdPriv(cmdChain);
+              if (!cpi) {
+                seal.replyToSender(ctx, msg, `指令${val3}不存在`);
+                return ret;
+              }
+              seal.replyToSender(ctx, msg, `指令${val3}权限限制:${cpi.priv.join('-')}`);
+              return ret;
+            }
+            case 'reset': {
+              PrivilegeManager.resetCmdPriv();
+              seal.replyToSender(ctx, msg, '权限系统已重置');
+              return ret;
+            }
+            default: {
+              seal.replyToSender(ctx, msg, `帮助:
+【.ai priv s】会话权限相关
+【.ai priv st】修改指令权限
+【.ai priv show】检查指令权限
+【.ai priv reset】重置权限系统`);
+              return ret;
+            }
+          }
+        }
         case 'st': {
           if (ctx.privilegeLevel < 100) {
             seal.replyToSender(ctx, msg, seal.formatTmpl(ctx, "核心:提示_无权限"));

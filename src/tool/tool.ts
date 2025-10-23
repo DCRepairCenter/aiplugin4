@@ -14,6 +14,7 @@ import { registerCancelTimer, registerGetTime, registerSetTimer, registerShowTim
 import { registerRecord, registerTextToSound } from "./tool_voice"
 import { registerWebSearch, registerWebRead } from "./tool_web_search"
 import { registerGroupSign } from "./tool_group_sign"
+import { registerMeme } from "./tool_meme"
 import { registerGetPersonInfo } from "./tool_person_info"
 import { registerDeleteMsg, registerGetMsg, registerSendMsg } from "./tool_message"
 import { registerSetEssenceMsg } from "./tool_essence_msg"
@@ -212,6 +213,7 @@ export class ToolManager {
         registerSearchCommonGroup();
         registerSetTriggerCondition();
         registerMusicPlay();
+        registerMeme();
     }
 
     /**
